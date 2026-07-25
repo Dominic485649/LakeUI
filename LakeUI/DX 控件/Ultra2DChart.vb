@@ -35,6 +35,7 @@ Public Class Ultra2DChart
     Public Enum AxisRangeModeEnum
         Auto
         Fixed
+        AutoClamped
     End Enum
 
     Public Enum SeriesValueLabelModeEnum
@@ -1619,6 +1620,11 @@ Public Class Ultra2DChart
         If interval <= 0 OrElse Double.IsInfinity(interval) OrElse Double.IsNaN(interval) Then interval = 1
         Dim niceMin = Math.Floor(minVal / interval) * interval
         Dim niceMax = Math.Ceiling(maxVal / interval) * interval
+        If Y轴范围模式 = AxisRangeModeEnum.AutoClamped AndAlso Y轴最大值 > Y轴最小值 Then
+            niceMin = Math.Min(Y轴最大值, Math.Max(Y轴最小值, niceMin))
+            niceMax = Math.Min(Y轴最大值, Math.Max(Y轴最小值, niceMax))
+            If niceMax <= niceMin Then Return (Y轴最小值, Y轴最大值)
+        End If
         If niceMax <= niceMin Then niceMax = niceMin + interval
         Return (niceMin, niceMax)
     End Function
@@ -2465,7 +2471,7 @@ Public Class Ultra2DChart
     End Property
 
     Private Y轴范围模式 As AxisRangeModeEnum = AxisRangeModeEnum.Auto
-    <Category("LakeUI"), Description("Y 轴范围模式。"), DefaultValue(GetType(AxisRangeModeEnum), "Auto"), Browsable(True)>
+    <Category("LakeUI"), Description("Y 轴范围模式；AutoClamped 会自动缩放，并用固定最小值和最大值裁剪范围。"), DefaultValue(GetType(AxisRangeModeEnum), "Auto"), Browsable(True)>
     Public Property YAxisRangeMode As AxisRangeModeEnum
         Get
             Return Y轴范围模式
@@ -2476,7 +2482,7 @@ Public Class Ultra2DChart
     End Property
 
     Private Y轴最小值 As Double = 0
-    <Category("LakeUI"), Description("Y 轴固定最小值。"), DefaultValue(0.0), Browsable(True)>
+    <Category("LakeUI"), Description("Y 轴固定最小值，或 AutoClamped 模式的最小边界。"), DefaultValue(0.0), Browsable(True)>
     Public Property YAxisMinimum As Double
         Get
             Return Y轴最小值
@@ -2487,7 +2493,7 @@ Public Class Ultra2DChart
     End Property
 
     Private Y轴最大值 As Double = 100
-    <Category("LakeUI"), Description("Y 轴固定最大值。"), DefaultValue(100.0), Browsable(True)>
+    <Category("LakeUI"), Description("Y 轴固定最大值，或 AutoClamped 模式的最大边界。"), DefaultValue(100.0), Browsable(True)>
     Public Property YAxisMaximum As Double
         Get
             Return Y轴最大值
