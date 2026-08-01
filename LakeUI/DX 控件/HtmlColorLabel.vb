@@ -466,10 +466,10 @@ Public Class HtmlColorLabel
 
         Dim 当前Y As Integer = 起始Y
         For Each 行 In 行列表
-            Dim 对齐偏移 As Integer
+            Dim 对齐偏移 As Single
             Select Case 文字对齐方位
                 Case TextAlignEnum.Center
-                    对齐偏移 = (内容区域.Width - 行.行宽) \ 2
+                    对齐偏移 = (内容区域.Width - 行.行宽) / 2.0F
                 Case TextAlignEnum.TopRight, TextAlignEnum.BottomRight, TextAlignEnum.MiddleRight
                     对齐偏移 = 内容区域.Width - 行.行宽
                 Case Else
@@ -586,8 +586,8 @@ Public Class HtmlColorLabel
         Public 字号 As Single
         Public 字体名称 As String
         Public 字体样式 As FontStyle
-        Public X偏移 As Integer
-        Public 宽度 As Integer
+        Public X偏移 As Single
+        Public 宽度 As Single
         Public 高度 As Integer
     End Structure
 
@@ -599,11 +599,9 @@ Public Class HtmlColorLabel
 
     Private Structure 渲染行
         Public 单元列表 As List(Of 渲染单元)
-        Public 行宽 As Integer
+        Public 行宽 As Single
         Public 行高 As Integer
     End Structure
-
-    Private Shared ReadOnly 文本测量格式 As TextFormatFlags = TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
 
     ' 布局与字体缓存：仅在字体/文本/宽度变更时失效，避免重复解析与布局。
     Private 缓存布局行表 As List(Of 渲染行)
@@ -627,9 +625,9 @@ Public Class HtmlColorLabel
         End If
     End Sub
 
-    Private Shared Function 测量文本尺寸(text As String, font As Font) As Size
-        If String.IsNullOrEmpty(text) Then Return Size.Empty
-        Return TextRenderer.MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), 文本测量格式)
+    Private Function 测量文本尺寸(text As String, font As Font) As SizeF
+        If String.IsNullOrEmpty(text) Then Return SizeF.Empty
+        Return D3D_TextInterop.MeasureSize(text, font, DpiScale())
     End Function
 
     Private Function 获取缓存字体(字号 As Single, 字体名称 As String, 字体样式 As FontStyle) As Font
@@ -663,7 +661,7 @@ Public Class HtmlColorLabel
             缓存布局字体版本 = 字体版本
             Return 行列表
         End If
-        Dim 默认行高 As Integer = 测量文本尺寸("A", Me.Font).Height
+        Dim 默认行高 As Integer = CInt(Math.Ceiling(测量文本尺寸("A", Me.Font).Height))
         Dim 当前行 As New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 0}
 
         If ShouldShowInfoIcon() AndAlso 信息图标位置 = InfoIconPositionEnum.Start Then
@@ -685,7 +683,7 @@ Public Class HtmlColorLabel
                 For Each 单元 In 单元列表
                     Dim 单元尺寸 = 测量文本尺寸(单元, 片段字体)
                     Dim 单元宽度 = 单元尺寸.Width
-                    Dim 单元高度 = 单元尺寸.Height
+                    Dim 单元高度 = CInt(Math.Ceiling(单元尺寸.Height))
                     If 当前行.行宽 > 0 AndAlso 估算追加单元后的行宽(当前行, 单元宽度, 单元高度) > 最大宽度 Then
                         If 当前行.行高 = 0 Then 当前行.行高 = 单元高度
                         提交渲染行(当前行, 行列表)
@@ -696,7 +694,7 @@ Public Class HtmlColorLabel
                             Dim 字符文本 = ch.ToString()
                             Dim 字符尺寸 = 测量文本尺寸(字符文本, 片段字体)
                             Dim 字符宽度 = 字符尺寸.Width
-                            Dim 字符高度 = 字符尺寸.Height
+                            Dim 字符高度 = CInt(Math.Ceiling(字符尺寸.Height))
                             If 当前行.行宽 > 0 AndAlso 估算追加单元后的行宽(当前行, 字符宽度, 字符高度) > 最大宽度 Then
                                 If 当前行.行高 = 0 Then 当前行.行高 = 字符高度
                                 提交渲染行(当前行, 行列表)
@@ -776,11 +774,11 @@ Public Class HtmlColorLabel
         行列表.Add(行)
     End Sub
 
-    Private Function 估算追加单元后的行宽(行 As 渲染行, 追加宽度 As Integer, 追加高度 As Integer) As Integer
-        Dim result As Integer = 行.行宽 + 追加宽度
+    Private Function 估算追加单元后的行宽(行 As 渲染行, 追加宽度 As Single, 追加高度 As Integer) As Single
+        Dim result As Single = 行.行宽 + 追加宽度
         If 行.单元列表 Is Nothing OrElse 行.单元列表.Count = 0 Then Return result
 
-        Dim iconWidth As Integer = -1
+        Dim iconWidth As Single = -1
         For Each unit In 行.单元列表
             If unit.类型 = 渲染单元类型.信息图标 Then
                 iconWidth = unit.宽度
@@ -797,7 +795,7 @@ Public Class HtmlColorLabel
     Private Sub 修正行内信息图标尺寸(ByRef 行 As 渲染行)
         If 行.单元列表 Is Nothing OrElse 行.单元列表.Count = 0 Then Return
 
-        Dim oldIconWidth As Integer = 0
+        Dim oldIconWidth As Single = 0
         Dim iconIndex As Integer = -1
         For i As Integer = 0 To 行.单元列表.Count - 1
             If 行.单元列表(i).类型 = 渲染单元类型.信息图标 Then
@@ -811,7 +809,7 @@ Public Class HtmlColorLabel
         Dim newIconWidth As Integer = 计算信息图标尺寸(行.行高)
         If newIconWidth = oldIconWidth Then Return
 
-        Dim delta As Integer = newIconWidth - oldIconWidth
+        Dim delta As Single = newIconWidth - oldIconWidth
         Dim unit = 行.单元列表(iconIndex)
         unit.宽度 = newIconWidth
         unit.高度 = newIconWidth
@@ -1027,14 +1025,14 @@ Public Class HtmlColorLabel
         最大约束宽度 = Math.Max(1, 最大约束宽度)
         Dim 行列表 = 计算文本布局(最大约束宽度)
         Dim 总高度 As Integer = 0
-        Dim 内容最大宽度 As Integer = 0
+        Dim 内容最大宽度 As Single = 0
         For Each 行 In 行列表
             总高度 += 行.行高
             If 行.行宽 > 内容最大宽度 Then 内容最大宽度 = 行.行宽
         Next
         If 行列表.Count > 1 Then 总高度 += 行距 * (行列表.Count - 1)
-        If 总高度 = 0 Then 总高度 = 测量文本尺寸("A", Me.Font).Height
-        Dim 新宽度 = 内容最大宽度 + Me.Padding.Horizontal + 边框额外
+        If 总高度 = 0 Then 总高度 = CInt(Math.Ceiling(测量文本尺寸("A", Me.Font).Height))
+        Dim 新宽度 = CInt(Math.Ceiling(内容最大宽度)) + Me.Padding.Horizontal + 边框额外
         Dim 新高度 = 总高度 + Me.Padding.Vertical + 边框额外
         If Me.MaximumSize.Width > 0 Then 新宽度 = Math.Min(新宽度, Me.MaximumSize.Width)
         If Me.MaximumSize.Height > 0 Then 新高度 = Math.Min(新高度, Me.MaximumSize.Height)
@@ -1112,7 +1110,10 @@ Public Class HtmlColorLabel
         If Not 启用自动尺寸 OrElse Not IsHandleCreated OrElse 正在更新尺寸 Then Return
         正在更新尺寸 = True
         Try
-            Dim preferred = GetPreferredSize(New Size(Me.Width, Me.Height))
+            ' Dock=None 时 AutoSize 应按内容的自然尺寸增长；传入当前宽度会把控件的旧宽度
+            ' 误当成换行上限，导致宽文本被压成多行并留下非 Padding 产生的空白。
+            Dim 建议约束 As Size = If(Dock = DockStyle.None, Size.Empty, New Size(Me.Width, Me.Height))
+            Dim preferred = GetPreferredSize(建议约束)
             Select Case Dock
                 Case DockStyle.Top, DockStyle.Bottom
                     If Me.Height <> preferred.Height Then Me.Height = preferred.Height

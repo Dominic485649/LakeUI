@@ -116,4 +116,4 @@ D2D 对象必须来自同一个 factory/device context 家族。典型错误是�
 
 ## 文字路线
 
-`D3D_TextRenderer` 是唯一文字绘制入口。ClearTypeCompatible、Grayscale 和 Auto 已集中在这里切换；Outline 当前作为高质量策略位保留，真正几何描边或独立 text layer 后续必须继续在 `D3D_TextRenderer` 内扩展，迁移控件不能自建旧文字管线。
+`D3D_TextRenderer` 是唯一文字绘制入口。每次绘制会话都会通过 `D3D_D2DInterop.ApplyGlobalQuality` 应用 `GlobalOptions.GlobalTextQuality`；Outline 会使用全局缓存的自定义 DirectWrite RenderingParams 强制走字形轮廓。后续文字策略仍必须在 `D3D_TextRenderer` 内扩展，迁移控件不能自建旧文字管线。

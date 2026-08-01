@@ -17,6 +17,7 @@ Partial Class ThisIsYourWindow
         Try
             If disposing Then
                 DetachAll()
+                解除标题栏控件绑定()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

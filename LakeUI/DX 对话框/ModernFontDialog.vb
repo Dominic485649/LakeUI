@@ -1188,8 +1188,7 @@ Public Class ModernFontDialog
                 Dim range As New DW.TextRange(0, text.Length)
                 If f.Underline Then layout.SetUnderline(True, range)
                 If f.Strikeout Then layout.SetStrikethrough(True, range)
-                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, Color.White, context.DeviceGeneration)
-                context.DeviceContext.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, brush, D2D.DrawTextOptions.Clip)
+                context.DrawTextLayout(layout, Color.White, New Vector2(rect.X, rect.Y))
             End Using
         End Using
     End Sub

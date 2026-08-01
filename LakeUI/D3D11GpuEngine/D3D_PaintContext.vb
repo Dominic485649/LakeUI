@@ -267,6 +267,15 @@ Public NotInheritable Class D3D_PaintContext
     End Sub
 
     ''' <summary>
+    ''' 绘制调用方已配置样式的 DirectWrite TextLayout；文字质量仍由 D3D_TextRenderer 统一控制。
+    ''' </summary>
+    Public Sub DrawTextLayout(layout As Vortice.DirectWrite.IDWriteTextLayout,
+                              color As System.Drawing.Color,
+                              origin As Vector2)
+        Compositor.TextRenderer.DrawTextLayout(Me, layout, color, origin)
+    End Sub
+
+    ''' <summary>
     ''' 推入窗口 surface 上的轴对齐 clip。返回对象必须在同一 RenderGpu 调用栈中 Dispose，不能跨帧保存。
     ''' </summary>
     Public Function PushClip(rect As RectangleF) As IDisposable

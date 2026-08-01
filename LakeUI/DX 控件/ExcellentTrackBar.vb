@@ -270,7 +270,11 @@ Public Class ExcellentTrackBar
             If newVal = 当前值 Then Return
             当前值 = newVal
             Dim ratio As Single = 计算值比例(newVal)
-            动画助手.AnimateTo(ratio)
+            If 正在拖动 Then
+                动画助手.SetImmediate(ratio)
+            Else
+                动画助手.AnimateTo(ratio)
+            End If
             RaiseEvent ValueChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -1061,27 +1065,34 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
-        鼠标状态 = MouseStateEnum.Normal
+        If Not 正在拖动 Then 鼠标状态 = MouseStateEnum.Normal
         请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
+
+        Dim responseRect As RectangleF = 计算鼠标响应区域()
+        If Not responseRect.Contains(e.Location) Then Return
+
         鼠标状态 = MouseStateEnum.Pressed
         Me.Focus()
-        请求V3渲染()
+        正在拖动 = True
+        Me.Capture = True
+
         Dim thumbRect As RectangleF = 计算滑块矩形()
         If thumbRect.Contains(e.Location) Then
-            正在拖动 = True
             If 方向 = TrackOrientationEnum.Horizontal Then
                 拖动偏移 = e.X - CInt(thumbRect.X + thumbRect.Width / 2.0F)
             Else
                 拖动偏移 = e.Y - CInt(thumbRect.Y + thumbRect.Height / 2.0F)
             End If
-        ElseIf 计算鼠标响应区域().Contains(e.Location) Then
+        Else
+            拖动偏移 = 0
             更新值从坐标(e.Location)
         End If
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -1095,8 +1106,21 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
+        If e.Button <> MouseButtons.Left Then Return
         正在拖动 = False
+        拖动偏移 = 0
+        If Me.Capture Then Me.Capture = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
+        请求V3渲染()
+    End Sub
+
+    Protected Overrides Sub OnMouseCaptureChanged(e As EventArgs)
+        MyBase.OnMouseCaptureChanged(e)
+        If Me.Capture OrElse Not 正在拖动 Then Return
+
+        正在拖动 = False
+        拖动偏移 = 0
+        鼠标状态 = If(ClientRectangle.Contains(PointToClient(MousePosition)), MouseStateEnum.Hover, MouseStateEnum.Normal)
         请求V3渲染()
     End Sub
 

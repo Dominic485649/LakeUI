@@ -15,6 +15,7 @@ Imports Vortice.DirectWrite
 <DesignerCategory("Component")>
 <DefaultEvent("CaptionPaint")>
 Public Class ThisIsYourWindow
+    Implements IMessageFilter
 
 #Region "Win32 常量与结构"
 
@@ -30,6 +31,9 @@ Public Class ThisIsYourWindow
     Private Const WM_WINDOWPOSCHANGED As Integer = &H47
     Private Const WM_PAINT As Integer = &HF
     Private Const WM_ERASEBKGND As Integer = &H14
+    Private Const WM_KEYDOWN As Integer = &H100
+    Private Const WM_SYSKEYDOWN As Integer = &H104
+    Private Const WM_NCMOUSEMOVE As Integer = &HA0
 
     Private Const TPM_LEFTALIGN As Integer = &H0
     Private Const TPM_TOPALIGN As Integer = &H0
@@ -53,12 +57,15 @@ Public Class ThisIsYourWindow
     Private Const HTBOTTOMLEFT As Integer = 16
     Private Const HTBOTTOMRIGHT As Integer = 17
     Private Const HTCLOSE As Integer = 20
+    ' Use a standard non-client value without the HTHELP (21) system "Help" tooltip.
+    Private Const HTFULLSCREEN As Integer = 18 ' HTBORDER
     Private Const HTNOWHERE As Integer = 0
 
     Private Const SWP_FRAMECHANGED As Integer = &H20
     Private Const SWP_NOMOVE As Integer = &H2
     Private Const SWP_NOSIZE As Integer = &H1
     Private Const SWP_NOZORDER As Integer = &H4
+    Private Const SWP_NOOWNERZORDER As Integer = &H200
 
     Private Const DWMWA_TRANSITIONS_FORCEDISABLED As Integer = 3
     Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
@@ -79,6 +86,7 @@ Public Class ThisIsYourWindow
     Private Const WS_MINIMIZEBOX As Integer = &H20000
     Private Const WS_MAXIMIZEBOX As Integer = &H10000
     Private Const WS_SYSMENU As Integer = &H80000
+    Private Const WS_POPUP As Long = &H80000000L
     Private Const WS_EX_LAYERED As Integer = &H80000
     Private Const LWA_ALPHA As Integer = &H2
 
@@ -154,6 +162,10 @@ Public Class ThisIsYourWindow
     Private Shared Function GetClientRect(hWnd As IntPtr, ByRef lpRect As RECT) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
+    <DllImport("user32.dll")>
+    Private Shared Function GetCursorPos(ByRef lpPoint As NATIVEPOINT) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
     <StructLayout(LayoutKind.Sequential)>
     Private Structure OSVERSIONINFOEX
         Public dwOSVersionInfoSize As Integer
@@ -189,6 +201,11 @@ Public Class ThisIsYourWindow
         Public Left, Right, Top, Bottom As Integer
     End Structure
 
+    <StructLayout(LayoutKind.Sequential)>
+    Private Structure NATIVEPOINT
+        Public X, Y As Integer
+    End Structure
+
 #End Region
 
 #Region "每窗体状态"
@@ -203,8 +220,11 @@ Public Class ThisIsYourWindow
         Public OriginalPadding As Padding
         Public CachedIconBitmap As Bitmap
         Public CachedIconSource As Icon
-        Public CloseRect, MaxRect, MinRect, IconRect As Rectangle
+        Public CloseRect, MaxRect, MinRect, FullScreenRect, IconRect As Rectangle
+        Public CaptionControlRect As Rectangle
         Public LastTitleTextDirtyRect As Rectangle = Rectangle.Empty
+        Public TitleEllipsisSignature As Integer = Integer.MinValue
+        Public TitleDisplayText As String = String.Empty
         Public ShadowForm As ShadowWindow
         Public IsInSizeMove As Boolean = False
         Public DeferredClientBoundsActive As Boolean = False
@@ -216,6 +236,12 @@ Public Class ThisIsYourWindow
         Public WasMinimized As Boolean = False
         Public OriginalOpacity As Double = 1.0
         Public PendingFirstPaintRestore As Boolean = False
+        Public IsFullScreen As Boolean = False
+        Public FullScreenCaptionVisible As Boolean = False
+        Public FullScreenCaptionHideTimer As Timer
+        Public FullScreenOriginalStyle As Long
+        Public FullScreenOriginalBounds As Rectangle = Rectangle.Empty
+        Public FullScreenOriginalWindowState As FormWindowState = FormWindowState.Normal
         ' ── 布局缓存签名：仅当窗口宽度/按钮可见性/相关属性变化时重新计算按钮位置 ──
         Public LayoutSignature As Long = -1
         ' ── 毛玻璃 ──
@@ -231,6 +257,7 @@ Public Class ThisIsYourWindow
 
     Private ReadOnly _forms As New Dictionary(Of IntPtr, PerFormState)
     Private ReadOnly _pendingAttachHandlers As New Dictionary(Of Form, EventHandler)
+    Private _消息过滤器已注册 As Boolean
     Private _首个附加窗体 As Form
     Private Shared ReadOnly _attachedFormsLock As New Object()
     Private Shared ReadOnly _attachedForms As New Dictionary(Of Form, ThisIsYourWindow)
@@ -238,6 +265,14 @@ Public Class ThisIsYourWindow
     ' ── 绘制热路径共享缓存：避免每帧 New SolidBrush/Pen 造成 GC 压力 ──
     Private ReadOnly _共享画刷 As New SolidBrush(Color.Black)
     Private ReadOnly _共享画笔 As New Pen(Color.Black, 1.0F)
+    Private _标题栏绑定控件 As Control
+    Private _标题栏控件逻辑宽度 As Single
+    Private _正在同步标题栏控件 As Boolean
+    Private _标题栏控件原始父级 As Control
+    Private _标题栏控件原始边界 As Rectangle
+    Private _标题栏控件原始停靠 As DockStyle
+    Private _标题栏控件原始锚定 As AnchorStyles
+    Private _标题栏控件宿主窗体 As Form
 
     Private Function 查找状态(form As Form) As PerFormState
         Dim s As PerFormState = Nothing
@@ -298,6 +333,10 @@ Public Class ThisIsYourWindow
 
     Private Function 是首个附加窗体(form As Form) As Boolean
         Return form IsNot Nothing AndAlso ReferenceEquals(form, _首个附加窗体)
+    End Function
+
+    Private Function 全屏允许用于窗体(s As PerFormState) As Boolean
+        Return s IsNot Nothing AndAlso 是首个附加窗体(s.HostForm)
     End Function
 
 #End Region
@@ -414,6 +453,23 @@ Public Class ThisIsYourWindow
                            缩放逻辑尺寸(control, value.Bottom))
     End Function
 
+    Private Shared Function 规范化内边距(value As Padding) As Padding
+        Return New Padding(Math.Max(0, value.Left),
+                           Math.Max(0, value.Top),
+                           Math.Max(0, value.Right),
+                           Math.Max(0, value.Bottom))
+    End Function
+
+    Private Shared Function 应用内边距(bounds As Rectangle, padding As Padding) As Rectangle
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return Rectangle.Empty
+
+        Dim left As Integer = Math.Min(bounds.Width, Math.Max(0, padding.Left))
+        Dim top As Integer = Math.Min(bounds.Height, Math.Max(0, padding.Top))
+        Dim width As Integer = Math.Max(0, bounds.Width - left - Math.Max(0, padding.Right))
+        Dim height As Integer = Math.Max(0, bounds.Height - top - Math.Max(0, padding.Bottom))
+        Return New Rectangle(bounds.X + left, bounds.Y + top, width, height)
+    End Function
+
     Private Function 取缩放边框厚度(control As Control) As Integer
         Return Math.Max(0, 缩放逻辑尺寸(control, _边框厚度))
     End Function
@@ -422,9 +478,154 @@ Public Class ThisIsYourWindow
         Return Math.Max(0, 缩放逻辑尺寸(control, _标题栏高度))
     End Function
 
+    Private Function 取缩放标题栏底部横线高度(control As Control) As Integer
+        Return Math.Max(0, 缩放逻辑尺寸(control, _标题栏底部横线高度))
+    End Function
+
     Private Function 取缩放标题栏总高度(control As Control) As Integer
         Return 取缩放边框厚度(control) + 取缩放标题栏高度(control)
     End Function
+
+    Private Sub 标题栏绑定控件_Disposed(sender As Object, e As EventArgs)
+        If Not ReferenceEquals(sender, _标题栏绑定控件) Then Return
+        _标题栏绑定控件 = Nothing
+        _标题栏控件宿主窗体 = Nothing
+        _标题栏控件原始父级 = Nothing
+        _标题栏控件逻辑宽度 = 0.0F
+        使布局失效()
+        通知标题栏重绘()
+    End Sub
+
+    Private Sub 标题栏绑定控件_SizeChanged(sender As Object, e As EventArgs)
+        If _正在同步标题栏控件 OrElse Not ReferenceEquals(sender, _标题栏绑定控件) Then Return
+        Dim scaleSource As Control = If(_标题栏控件宿主窗体, _标题栏绑定控件)
+        _标题栏控件逻辑宽度 = _标题栏绑定控件.Width / Math.Max(0.01F, 取Dpi缩放(scaleSource))
+        使布局失效()
+        通知标题栏重绘()
+    End Sub
+
+    Private Sub 恢复标题栏控件原始布局()
+        Dim ctrl = _标题栏绑定控件
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
+
+        _正在同步标题栏控件 = True
+        Try
+            ctrl.Dock = DockStyle.None
+            If ctrl.Parent IsNot _标题栏控件原始父级 Then
+                ctrl.Parent?.Controls.Remove(ctrl)
+                If _标题栏控件原始父级 IsNot Nothing AndAlso Not _标题栏控件原始父级.IsDisposed Then
+                    _标题栏控件原始父级.Controls.Add(ctrl)
+                End If
+            End If
+            ctrl.Dock = _标题栏控件原始停靠
+            ctrl.Anchor = _标题栏控件原始锚定
+            ctrl.Bounds = _标题栏控件原始边界
+        Finally
+            _正在同步标题栏控件 = False
+        End Try
+    End Sub
+
+    Private Sub 解除标题栏控件绑定()
+        Dim ctrl = _标题栏绑定控件
+        If ctrl IsNot Nothing Then
+            Try : RemoveHandler ctrl.Disposed, AddressOf 标题栏绑定控件_Disposed : Catch : End Try
+            Try : RemoveHandler ctrl.SizeChanged, AddressOf 标题栏绑定控件_SizeChanged : Catch : End Try
+            恢复标题栏控件原始布局()
+        End If
+
+        _标题栏绑定控件 = Nothing
+        _标题栏控件宿主窗体 = Nothing
+        _标题栏控件原始父级 = Nothing
+        _标题栏控件原始边界 = Rectangle.Empty
+        _标题栏控件逻辑宽度 = 0.0F
+        For Each state In _forms.Values
+            state.CaptionControlRect = Rectangle.Empty
+            state.LayoutSignature = -1
+        Next
+    End Sub
+
+    Private Sub 同步所有标题栏绑定控件布局()
+        If _标题栏绑定控件 Is Nothing OrElse _标题栏绑定控件.IsDisposed Then Return
+
+        Dim hostState = 查找状态(_标题栏控件宿主窗体)
+        If hostState Is Nothing Then
+            hostState = _forms.Values.FirstOrDefault()
+            _标题栏控件宿主窗体 = hostState?.HostForm
+        End If
+
+        For Each state In _forms.Values
+            state.LayoutSignature = -1
+            RecalculateButtonBounds(state)
+        Next
+    End Sub
+
+    Private Sub 同步标题栏绑定控件布局(s As PerFormState)
+        If s Is Nothing OrElse s.HostForm Is Nothing Then Return
+        Dim ctrl = _标题栏绑定控件
+        If ctrl Is Nothing OrElse ctrl.IsDisposed OrElse
+           Not ReferenceEquals(s.HostForm, _标题栏控件宿主窗体) OrElse
+           (s.IsFullScreen AndAlso Not s.FullScreenCaptionVisible) Then
+            s.CaptionControlRect = Rectangle.Empty
+            If ctrl IsNot Nothing AndAlso Not ctrl.IsDisposed AndAlso
+               ReferenceEquals(s.HostForm, _标题栏控件宿主窗体) Then
+                _正在同步标题栏控件 = True
+                Try
+                    ctrl.SetBounds(0, 0, 0, 0)
+                Finally
+                    _正在同步标题栏控件 = False
+                End Try
+            End If
+            Return
+        End If
+
+        Dim captionRect = 获取标题栏布局矩形(s.HostForm)
+        If captionRect.Width <= 0 OrElse captionRect.Height <= 0 Then
+            s.CaptionControlRect = Rectangle.Empty
+            _正在同步标题栏控件 = True
+            Try
+                ctrl.SetBounds(captionRect.X, captionRect.Y, 0, 0)
+            Finally
+                _正在同步标题栏控件 = False
+            End Try
+            Return
+        End If
+
+        Dim leadingEdge As Integer = captionRect.Left
+        If Not s.IconRect.IsEmpty Then
+            Dim iconPadding As Padding = 缩放逻辑内边距(s.HostForm, _图标内边距)
+            leadingEdge = s.IconRect.Right + iconPadding.Right
+        ElseIf _按钮位置 = ButtonPositionEnum.Left Then
+            leadingEdge = Math.Max(Math.Max(s.CloseRect.Right, s.FullScreenRect.Right),
+                                   Math.Max(s.MaxRect.Right, s.MinRect.Right))
+        End If
+
+        Dim trailingEdge As Integer = captionRect.Right
+        If _按钮位置 = ButtonPositionEnum.Right Then
+            trailingEdge = Math.Min(s.CloseRect.Left, Math.Min(
+                If(s.FullScreenRect.IsEmpty, s.CloseRect.Left, s.FullScreenRect.Left),
+                Math.Min(
+                If(s.MaxRect.IsEmpty, s.CloseRect.Left, s.MaxRect.Left),
+                If(s.MinRect.IsEmpty, s.CloseRect.Left, s.MinRect.Left))))
+        End If
+
+        Dim x As Integer = leadingEdge
+        Dim y As Integer = captionRect.Top
+        Dim desiredWidth As Integer = Math.Max(0, CInt(Math.Round(_标题栏控件逻辑宽度 * 取Dpi缩放(s.HostForm), MidpointRounding.AwayFromZero)))
+        Dim width As Integer = Math.Max(0, Math.Min(desiredWidth, trailingEdge - x))
+        Dim height As Integer = captionRect.Height
+        s.CaptionControlRect = New Rectangle(x, y, width, height)
+
+        _正在同步标题栏控件 = True
+        Try
+            ctrl.Dock = DockStyle.None
+            ctrl.Anchor = AnchorStyles.Top Or AnchorStyles.Left
+            If ctrl.Parent IsNot s.HostForm Then s.HostForm.Controls.Add(ctrl)
+            ctrl.SetBounds(x, y, width, height)
+            ctrl.BringToFront()
+        Finally
+            _正在同步标题栏控件 = False
+        End Try
+    End Sub
 
     Private Shared Function 获取真实客户区尺寸(form As Form) As Size
         If form Is Nothing OrElse form.IsDisposed Then Return Size.Empty
@@ -701,6 +902,17 @@ Public Class ThisIsYourWindow
         InvalidateTitleText(s, True)
     End Sub
 
+    Private Sub 宿主窗口_StyleChanged(sender As Object, e As EventArgs)
+        Dim frm = TryCast(sender, Form)
+        If frm Is Nothing Then Return
+        Dim s = 查找状态(frm)
+        If s Is Nothing Then Return
+
+        s.LayoutSignature = -1
+        RecalculateButtonBounds(s)
+        InvalidateCaption(frm, True)
+    End Sub
+
     Private Sub InvalidateTitleText(s As PerFormState, Optional immediate As Boolean = False)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Return
         RecalculateButtonBounds(s)
@@ -732,6 +944,17 @@ Public Class ThisIsYourWindow
 
     Private Sub 更新窗口内边距(s As PerFormState)
         If s Is Nothing Then Return
+        If s.IsFullScreen Then
+            Dim captionInset As Integer = If(s.FullScreenCaptionVisible,
+                                             取缩放标题栏高度(s.HostForm),
+                                             0)
+            s.HostForm.Padding = New Padding(
+                s.OriginalPadding.Left,
+                s.OriginalPadding.Top + captionInset,
+                s.OriginalPadding.Right,
+                s.OriginalPadding.Bottom)
+            Return
+        End If
         Dim bdr As Integer = 取缩放边框厚度(s.HostForm)
         Dim captionH As Integer = 取缩放标题栏高度(s.HostForm)
         s.HostForm.Padding = New Padding(
@@ -836,6 +1059,40 @@ Public Class ThisIsYourWindow
 
 #Region "属性 - 标题栏"
 
+    ''' <summary>
+    ''' 标题栏左侧绑定的单个界面控件。控件显示在图标和左侧窗口按钮之后，标题文字之前。
+    ''' 布局宽度读取控件自身的 <see cref="Control.Width"/>，并随宿主窗体 DPI 缩放。
+    ''' 一个组件同时附加多个窗体时，该控件只显示在第一个附加的窗体中。
+    ''' </summary>
+    <Category("LakeUI"), Description("标题栏左侧绑定的界面控件。只显示在第一个附加的窗体中。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property CaptionControl As Control
+        Get
+            Return _标题栏绑定控件
+        End Get
+        Set(value As Control)
+            If ReferenceEquals(_标题栏绑定控件, value) Then Return
+            If value IsNot Nothing AndAlso TypeOf value Is Form Then
+                Throw New ArgumentException("CaptionControl 不能绑定 Form，请绑定 Panel 或其他普通控件。", NameOf(value))
+            End If
+
+            解除标题栏控件绑定()
+            _标题栏绑定控件 = value
+            If _标题栏绑定控件 IsNot Nothing Then
+                _标题栏控件原始父级 = _标题栏绑定控件.Parent
+                _标题栏控件原始边界 = _标题栏绑定控件.Bounds
+                _标题栏控件原始停靠 = _标题栏绑定控件.Dock
+                _标题栏控件原始锚定 = _标题栏绑定控件.Anchor
+                _标题栏控件逻辑宽度 = _标题栏绑定控件.Width / Math.Max(0.01F, 取Dpi缩放(_标题栏绑定控件))
+                AddHandler _标题栏绑定控件.Disposed, AddressOf 标题栏绑定控件_Disposed
+                AddHandler _标题栏绑定控件.SizeChanged, AddressOf 标题栏绑定控件_SizeChanged
+            End If
+
+            使布局失效()
+            通知标题栏重绘()
+        End Set
+    End Property
+
     Private _标题栏高度 As Integer = 32
     ''' <summary>标题栏区域的高度（逻辑像素）。改变此值会同步重算按钮布局并调整窗体内边距。</summary>
     <Category("LakeUI"), Description("标题栏区域的高度（逻辑像素）。"), DefaultValue(32)>
@@ -853,6 +1110,36 @@ Public Class ThisIsYourWindow
                 更新窗口内边距(s)
             Next
             通知重绘()
+        End Set
+    End Property
+
+    Private _标题栏底部横线高度 As Integer = 1
+    ''' <summary>标题栏底部横线的高度（逻辑像素）。横线占用标题栏高度且不受 <see cref="CaptionPadding"/> 影响；设为 0 表示不绘制。</summary>
+    <Category("LakeUI"), Description("标题栏底部横线的高度（逻辑像素）。0 = 不绘制横线。"), DefaultValue(1)>
+    Public Property CaptionBottomLineHeight As Integer
+        Get
+            Return _标题栏底部横线高度
+        End Get
+        Set(value As Integer)
+            value = Math.Max(0, value)
+            If _标题栏底部横线高度 = value Then Return
+            _标题栏底部横线高度 = value
+            使布局失效()
+            通知标题栏重绘()
+        End Set
+    End Property
+
+    Private _标题栏底部横线颜色 As Color = Color.FromArgb(40, 220, 220, 220)
+    ''' <summary>标题栏底部横线的颜色。</summary>
+    <Category("LakeUI"), Description("标题栏底部横线的颜色。"), DefaultValue(GetType(Color), "40, 220, 220, 220")>
+    Public Property CaptionBottomLineColor As Color
+        Get
+            Return _标题栏底部横线颜色
+        End Get
+        Set(value As Color)
+            If _标题栏底部横线颜色 = value Then Return
+            _标题栏底部横线颜色 = value
+            通知标题栏重绘()
         End Set
     End Property
 
@@ -996,7 +1283,27 @@ Public Class ThisIsYourWindow
             Return _标题文字左边距
         End Get
         Set(value As Integer)
-            _标题文字左边距 = Math.Max(0, value) : 通知重绘()
+            value = Math.Max(0, value)
+            If _标题文字左边距 = value Then Return
+            _标题文字左边距 = value
+            使布局失效()
+            通知标题栏重绘()
+        End Set
+    End Property
+
+    Private _标题栏内容内边距 As Padding = Padding.Empty
+    ''' <summary>标题栏内所有内容距离标题栏四周的内边距（逻辑像素）。</summary>
+    <Category("LakeUI"), Description("标题栏整体内容的四周内边距。"), DefaultValue(GetType(Padding), "0, 0, 0, 0")>
+    Public Property CaptionPadding As Padding
+        Get
+            Return _标题栏内容内边距
+        End Get
+        Set(value As Padding)
+            value = 规范化内边距(value)
+            If _标题栏内容内边距.Equals(value) Then Return
+            _标题栏内容内边距 = value
+            使布局失效()
+            通知标题栏重绘()
         End Set
     End Property
 
@@ -1061,17 +1368,17 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _图标左边距 As Integer = 8
-    ''' <summary>图标距离其外侧（按钮组左侧或窗口左边缘）的水平间距（逻辑像素）。</summary>
-    <Category("LakeUI"), Description("图标距离窗口左边缘的间距。"), DefaultValue(8)>
-    Public Property IconPaddingLeft As Integer
+    Private _图标内边距 As New Padding(8, 0, 0, 0)
+    ''' <summary>图标四周的内边距（逻辑像素）。左右值同时决定图标与相邻内容的间距，上下值限定图标的纵向布局区域。</summary>
+    <Category("LakeUI"), Description("图标四周的内边距。"), DefaultValue(GetType(Padding), "8, 0, 0, 0")>
+    Public Property IconPadding As Padding
         Get
-            Return _图标左边距
+            Return _图标内边距
         End Get
-        Set(value As Integer)
-            value = Math.Max(0, value)
-            If _图标左边距 = value Then Return
-            _图标左边距 = value
+        Set(value As Padding)
+            value = 规范化内边距(value)
+            If _图标内边距.Equals(value) Then Return
+            _图标内边距 = value
             使布局失效()
             通知标题栏重绘()
         End Set
@@ -1144,7 +1451,10 @@ Public Class ThisIsYourWindow
             Return _按钮内边距
         End Get
         Set(value As Padding)
-            _按钮内边距 = value : 通知重绘()
+            value = 规范化内边距(value)
+            If _按钮内边距.Equals(value) Then Return
+            _按钮内边距 = value
+            通知重绘()
         End Set
     End Property
 
@@ -1171,6 +1481,21 @@ Public Class ThisIsYourWindow
             value = Math.Max(0, value)
             If _按钮间距 = value Then Return
             _按钮间距 = value
+            使布局失效()
+            通知标题栏重绘()
+        End Set
+    End Property
+
+    Private _显示全屏按钮 As Boolean = False
+    ''' <summary>是否在首个附加窗体的标题栏显示全屏按钮。F11 仅对首个附加窗体生效。</summary>
+    <Category("LakeUI"), Description("是否在首个附加窗体显示全屏按钮。显示后可通过按钮或 F11 进入全屏。"), DefaultValue(False)>
+    Public Property ShowFullScreenButton As Boolean
+        Get
+            Return _显示全屏按钮
+        End Get
+        Set(value As Boolean)
+            If _显示全屏按钮 = value Then Return
+            _显示全屏按钮 = value
             使布局失效()
             通知标题栏重绘()
         End Set
@@ -1385,6 +1710,22 @@ Public Class ThisIsYourWindow
             _阴影模式 = value
             For Each s In _forms.Values
                 Dim hWnd = s.HostForm.Handle
+                If s.IsFullScreen Then
+                    If value = ShadowModeEnum.DWM Then
+                        s.FullScreenOriginalStyle = s.FullScreenOriginalStyle Or WS_CAPTION
+                    Else
+                        s.FullScreenOriginalStyle = s.FullScreenOriginalStyle And Not CLng(WS_CAPTION)
+                    End If
+                    Dim fullScreenStyle As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
+                    fullScreenStyle = (fullScreenStyle Or WS_POPUP) And Not CLng(WS_CAPTION) And Not CLng(WS_THICKFRAME)
+                    SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(fullScreenStyle))
+                    应用全屏Dwm窗口属性(hWnd)
+                    SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
+                                 CUInt(SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER))
+                    更新阴影(s)
+                    请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+                    Continue For
+                End If
                 Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
                 If value = ShadowModeEnum.DWM Then
                     style = style Or WS_CAPTION
@@ -1505,7 +1846,7 @@ Public Class ThisIsYourWindow
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
         Dim minimized As Boolean = (s.HostForm.WindowState = FormWindowState.Minimized)
 
-        If _阴影模式 <> ShadowModeEnum.Layer OrElse zoomed OrElse minimized OrElse Not s.HostForm.Visible Then
+        If _阴影模式 <> ShadowModeEnum.Layer OrElse s.IsFullScreen OrElse zoomed OrElse minimized OrElse Not s.HostForm.Visible Then
             If s.ShadowForm IsNot Nothing Then
                 If Not s.HostForm.Visible Then
                     销毁阴影(s)
@@ -1975,6 +2316,8 @@ Public Class ThisIsYourWindow
     Public Event CaptionPaint(sender As Object, e As CaptionPaintEventArgs)
     ''' <summary>当窗口的激活状态发生变化时触发，可用于联动外部 UI 的高亮 / 低亮显示。</summary>
     Public Event ActiveChanged(sender As Object, e As ActiveChangedEventArgs)
+    ''' <summary>当指定窗体进入或退出全屏时触发。</summary>
+    Public Event FullScreenChanged(sender As Object, e As FullScreenChangedEventArgs)
     ''' <summary>当默认命中测试结果为 HTCLIENT 时触发，允许将客户区某些区域识别为标题、按钮或调整边框。</summary>
     Public Event CustomHitTest(sender As Object, e As CustomHitTestEventArgs)
 
@@ -2024,66 +2367,369 @@ Public Class ThisIsYourWindow
 
 #End Region
 
+#Region "全屏"
+
+    ''' <summary>返回指定附加窗体当前是否处于全屏模式。</summary>
+    Public Function IsFullScreen(targetForm As Form) As Boolean
+        Dim s = 查找状态(targetForm)
+        Return s IsNot Nothing AndAlso s.IsFullScreen
+    End Function
+
+    ''' <summary>让首个附加窗体进入覆盖当前显示器的无边框全屏模式。</summary>
+    Public Sub EnterFullScreen(targetForm As Form)
+        SetFullScreen(targetForm, True)
+    End Sub
+
+    ''' <summary>让指定附加窗体退出全屏并恢复进入前的窗口状态与边界。</summary>
+    Public Sub ExitFullScreen(targetForm As Form)
+        SetFullScreen(targetForm, False)
+    End Sub
+
+    ''' <summary>切换首个附加窗体的全屏状态。</summary>
+    Public Sub ToggleFullScreen(targetForm As Form)
+        Dim s = 查找状态(targetForm)
+        If s Is Nothing Then Throw New InvalidOperationException("目标窗体尚未附加到 ThisIsYourWindow。")
+        SetFullScreen(targetForm, Not s.IsFullScreen)
+    End Sub
+
+    ''' <summary>设置首个附加窗体的全屏状态。其他附加窗体不能进入全屏。</summary>
+    Public Sub SetFullScreen(targetForm As Form, fullScreen As Boolean)
+        ArgumentNullException.ThrowIfNull(targetForm)
+        If targetForm.IsDisposed OrElse Not targetForm.IsHandleCreated Then Return
+        If targetForm.InvokeRequired Then
+            targetForm.Invoke(Sub() SetFullScreen(targetForm, fullScreen))
+            Return
+        End If
+
+        Dim s = 查找状态(targetForm)
+        If s Is Nothing Then Throw New InvalidOperationException("目标窗体尚未附加到 ThisIsYourWindow。")
+        If fullScreen AndAlso Not 全屏允许用于窗体(s) Then
+            Throw New InvalidOperationException("全屏功能仅对首个附加到 ThisIsYourWindow 的窗体开放。")
+        End If
+        If s.IsFullScreen = fullScreen Then Return
+
+        If fullScreen Then
+            进入全屏(s)
+        Else
+            退出全屏(s)
+        End If
+    End Sub
+
+    Private Sub 进入全屏(s As PerFormState)
+        If Not 全屏允许用于窗体(s) Then Return
+        Dim frm = s.HostForm
+        If frm Is Nothing OrElse frm.IsDisposed OrElse Not frm.IsHandleCreated Then Return
+
+        Dim hWnd As IntPtr = frm.Handle
+        Dim monitorBounds As Rectangle = Screen.FromHandle(hWnd).Bounds
+        s.FullScreenOriginalWindowState = frm.WindowState
+        If frm.WindowState = FormWindowState.Normal Then
+            s.FullScreenOriginalBounds = 获取窗口屏幕矩形(frm)
+        Else
+            s.FullScreenOriginalBounds = frm.RestoreBounds
+        End If
+        If s.FullScreenOriginalBounds.Width <= 0 OrElse s.FullScreenOriginalBounds.Height <= 0 Then
+            s.FullScreenOriginalBounds = 获取窗口屏幕矩形(frm)
+        End If
+
+        ' 全屏期间保持 Form.WindowState = Normal，避免最大化状态位与 WS_POPUP 混用，
+        ' 否则退出全屏时 WinForms 可能不会重新执行最大化状态转换。
+        If frm.WindowState <> FormWindowState.Normal Then frm.WindowState = FormWindowState.Normal
+        s.FullScreenOriginalStyle = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
+
+        s.IsFullScreen = True
+        s.FullScreenCaptionVisible = False
+        停止全屏标题栏隐藏计时器(s)
+        s.HoverHit = HTNOWHERE
+        s.PressedHit = HTNOWHERE
+        s.LayoutSignature = -1
+        应用全屏窗口外观(s, monitorBounds)
+        Dim cursorPoint As NATIVEPOINT
+        If GetCursorPos(cursorPoint) Then
+            处理全屏鼠标移动(s, frm.PointToClient(New Point(cursorPoint.X, cursorPoint.Y)))
+        End If
+        RaiseEvent FullScreenChanged(Me, New FullScreenChangedEventArgs(True, frm))
+    End Sub
+
+    Private Sub 应用全屏窗口外观(s As PerFormState, monitorBounds As Rectangle)
+        Dim frm = s.HostForm
+        If frm Is Nothing OrElse frm.IsDisposed OrElse Not frm.IsHandleCreated Then Return
+
+        Dim hWnd As IntPtr = frm.Handle
+        Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
+        style = (style Or WS_POPUP) And Not CLng(WS_CAPTION) And Not CLng(WS_THICKFRAME)
+        SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(style))
+        应用全屏Dwm窗口属性(hWnd)
+        更新窗口内边距(s)
+        SetWindowPos(hWnd, IntPtr.Zero,
+                     monitorBounds.X, monitorBounds.Y, monitorBounds.Width, monitorBounds.Height,
+                     CUInt(SWP_FRAMECHANGED Or SWP_NOOWNERZORDER))
+
+        s.LayoutSignature = -1
+        RecalculateButtonBounds(s)
+        更新阴影(s)
+        请求V3渲染(frm, 获取真实客户区矩形(frm), True)
+        If 毛玻璃当前启用(s) Then 请求毛玻璃帧(s, True, forceImageMode:=True)
+    End Sub
+
+    Private Shared Sub 应用全屏Dwm窗口属性(hWnd As IntPtr)
+        Try
+            Dim pref As Integer = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_DONOTROUND
+            Dim unused1 = DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
+            Dim colorNone As Integer = DWMWA_COLOR_NONE
+            Dim unused2 = DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, colorNone, 4)
+            Dim margins As New MARGINS()
+            Dim unused3 = DwmExtendFrameIntoClientArea(hWnd, margins)
+        Catch
+        End Try
+    End Sub
+
+    Private Sub 退出全屏(s As PerFormState)
+        Dim frm = s.HostForm
+        If frm Is Nothing OrElse frm.IsDisposed OrElse Not frm.IsHandleCreated Then Return
+
+        Dim hWnd As IntPtr = frm.Handle
+        Dim restoreBounds As Rectangle = s.FullScreenOriginalBounds
+        Dim restoreState As FormWindowState = s.FullScreenOriginalWindowState
+        s.IsFullScreen = False
+        s.FullScreenCaptionVisible = False
+        停止全屏标题栏隐藏计时器(s)
+        s.HoverHit = HTNOWHERE
+        s.PressedHit = HTNOWHERE
+        s.LayoutSignature = -1
+
+        If frm.WindowState <> FormWindowState.Normal Then frm.WindowState = FormWindowState.Normal
+        SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(s.FullScreenOriginalStyle))
+        应用Dwm窗口属性(hWnd)
+        更新窗口内边距(s)
+        frm.Bounds = restoreBounds
+        SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
+                     CUInt(SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER Or SWP_NOOWNERZORDER))
+        If restoreState <> FormWindowState.Normal Then frm.WindowState = restoreState
+
+        s.FullScreenOriginalBounds = Rectangle.Empty
+        ' 最大化/还原会经过 WM_SIZE 与 WM_SYSCOMMAND，并可能临时加入原生标题栏样式。
+        ' 最后按控件当前属性统一收敛窗口样式、客户区内边距与自定义标题栏布局。
+        Refresh(frm)
+        If 毛玻璃当前启用(s) Then 请求毛玻璃帧(s, True, forceImageMode:=True)
+        RaiseEvent FullScreenChanged(Me, New FullScreenChangedEventArgs(False, frm))
+    End Sub
+
+    Private Sub 处理全屏鼠标移动(s As PerFormState, clientPoint As Point)
+        If s Is Nothing OrElse Not s.IsFullScreen Then Return
+
+        Dim captionHeight As Integer = Math.Max(1, 取缩放标题栏高度(s.HostForm))
+        If clientPoint.Y <= 1 Then
+            显示全屏标题栏(s)
+        ElseIf s.FullScreenCaptionVisible AndAlso clientPoint.Y > captionHeight Then
+            启动全屏标题栏隐藏计时器(s)
+        ElseIf s.FullScreenCaptionVisible Then
+            停止全屏标题栏隐藏计时器(s)
+        End If
+    End Sub
+
+    Private Sub 显示全屏标题栏(s As PerFormState)
+        If s Is Nothing OrElse Not s.IsFullScreen Then Return
+        停止全屏标题栏隐藏计时器(s)
+        If s.FullScreenCaptionVisible Then Return
+        s.FullScreenCaptionVisible = True
+        s.LayoutSignature = -1
+        更新窗口内边距(s)
+        s.HostForm.PerformLayout()
+        RecalculateButtonBounds(s)
+        请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+    End Sub
+
+    Private Sub 启动全屏标题栏隐藏计时器(s As PerFormState)
+        If s Is Nothing OrElse Not s.IsFullScreen OrElse Not s.FullScreenCaptionVisible Then Return
+        If s.FullScreenCaptionHideTimer IsNot Nothing Then Return
+        s.FullScreenCaptionHideTimer = New Timer With {.Interval = 900}
+        AddHandler s.FullScreenCaptionHideTimer.Tick,
+            Sub(sender, e)
+                If s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.IsFullScreen Then
+                    停止全屏标题栏隐藏计时器(s)
+                    Return
+                End If
+                Dim p As NATIVEPOINT
+                If Not GetCursorPos(p) Then Return
+                Dim clientPoint As Point = s.HostForm.PointToClient(New Point(p.X, p.Y))
+                If clientPoint.Y > Math.Max(1, 取缩放标题栏高度(s.HostForm)) Then
+                    s.FullScreenCaptionVisible = False
+                    s.LayoutSignature = -1
+                    停止全屏标题栏隐藏计时器(s)
+                    更新窗口内边距(s)
+                    s.HostForm.PerformLayout()
+                    RecalculateButtonBounds(s)
+                    请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+                Else
+                    停止全屏标题栏隐藏计时器(s)
+                End If
+            End Sub
+        s.FullScreenCaptionHideTimer.Start()
+    End Sub
+
+    Private Shared Sub 停止全屏标题栏隐藏计时器(s As PerFormState)
+        If s Is Nothing OrElse s.FullScreenCaptionHideTimer Is Nothing Then Return
+        s.FullScreenCaptionHideTimer.Stop()
+        s.FullScreenCaptionHideTimer.Dispose()
+        s.FullScreenCaptionHideTimer = Nothing
+    End Sub
+
+    Private Sub 注册键盘过滤器()
+        If _消息过滤器已注册 Then Return
+        Application.AddMessageFilter(Me)
+        _消息过滤器已注册 = True
+    End Sub
+
+    Private Sub 注销键盘过滤器()
+        If Not _消息过滤器已注册 Then Return
+        Application.RemoveMessageFilter(Me)
+        _消息过滤器已注册 = False
+    End Sub
+
+    Public Function PreFilterMessage(ByRef m As Message) As Boolean Implements IMessageFilter.PreFilterMessage
+        If m.Msg = WM_MOUSEMOVE OrElse m.Msg = WM_NCMOUSEMOVE Then
+            Dim mouseState = 查找消息所属状态(m.HWnd)
+            If mouseState IsNot Nothing AndAlso mouseState.IsFullScreen Then
+                Dim p As NATIVEPOINT
+                If GetCursorPos(p) Then
+                    处理全屏鼠标移动(mouseState,
+                                     mouseState.HostForm.PointToClient(New Point(p.X, p.Y)))
+                End If
+            End If
+            Return False
+        End If
+        If m.Msg <> WM_KEYDOWN AndAlso m.Msg <> WM_SYSKEYDOWN Then Return False
+        If (m.LParam.ToInt64() And &H40000000L) <> 0 Then Return False
+
+        Dim keyCode As Keys = CType(m.WParam.ToInt32() And &HFFFF, Keys)
+        If keyCode <> Keys.Escape AndAlso keyCode <> Keys.F11 Then Return False
+
+        Dim activeState As PerFormState = Nothing
+        For Each state In _forms.Values
+            Dim frm = state.HostForm
+            If frm IsNot Nothing AndAlso Not frm.IsDisposed AndAlso
+               (frm.ContainsFocus OrElse ReferenceEquals(Form.ActiveForm, frm)) Then
+                activeState = state
+                Exit For
+            End If
+        Next
+        If activeState Is Nothing Then Return False
+
+        If keyCode = Keys.Escape Then
+            If Not activeState.IsFullScreen Then Return False
+            退出全屏(activeState)
+            Return True
+        End If
+
+        If activeState.IsFullScreen Then
+            退出全屏(activeState)
+            Return True
+        End If
+        If Not _显示全屏按钮 OrElse Not 全屏允许用于窗体(activeState) Then Return False
+        进入全屏(activeState)
+        Return True
+    End Function
+
+    Private Function 查找消息所属状态(hWnd As IntPtr) As PerFormState
+        Dim direct As PerFormState = Nothing
+        If _forms.TryGetValue(hWnd, direct) Then Return direct
+
+        Dim sourceControl As Control = Control.FromHandle(hWnd)
+        Dim form = sourceControl?.FindForm()
+        If form Is Nothing Then Return Nothing
+        Return 查找状态(form)
+    End Function
+
+#End Region
+
 #Region "按钮区域计算"
 
     Friend Sub RecalculateButtonBounds(s As PerFormState)
         If s Is Nothing Then Return
         Dim form = s.HostForm
+        If _标题栏绑定控件 IsNot Nothing AndAlso _标题栏控件宿主窗体 Is Nothing Then
+            _标题栏控件宿主窗体 = form
+        End If
         Dim w As Integer = 获取真实客户区尺寸(form).Width
         Dim bdr As Integer = 取缩放边框厚度(form)
         Dim bw As Integer = Math.Max(缩放逻辑尺寸(form, 16), 缩放逻辑尺寸(form, _按钮宽度))
-        Dim bh As Integer = 取缩放标题栏高度(form)
+        Dim captionLayoutRect As Rectangle = 获取标题栏布局矩形(form)
+        Dim bh As Integer = captionLayoutRect.Height
         Dim sp As Integer = Math.Max(0, 缩放逻辑尺寸(form, _按钮间距))
         Dim iconSize As Integer = Math.Max(0, 缩放逻辑尺寸(form, _图标大小))
-        Dim iconPadLeft As Integer = Math.Max(0, 缩放逻辑尺寸(form, _图标左边距))
+        Dim iconPadding As Padding = 缩放逻辑内边距(form, _图标内边距)
+        Dim captionPadding As Padding = 缩放逻辑内边距(form, _标题栏内容内边距)
         Dim hasMin As Boolean = s.HostForm.MinimizeBox
         Dim hasMax As Boolean = s.HostForm.MaximizeBox
+        Dim hasFullScreen As Boolean = _显示全屏按钮 AndAlso 全屏允许用于窗体(s)
         Dim posRight As Boolean = (_按钮位置 = ButtonPositionEnum.Right)
-        Dim iconNone As Boolean = (_图标来源 = IconSourceEnum.None)
+        Dim iconNone As Boolean = (_图标来源 = IconSourceEnum.None OrElse Not s.HostForm.ShowIcon)
 
         ' 布局签名：所有影响按钮/图标位置的输入生成哈希，避免手工 bit-pack 截断导致缓存误命中。
-        Dim sig As Long = HashCode.Combine(w, V3_DpiContext.FromControl(form).Dpi, bdr, bw, bh, sp, iconSize, iconPadLeft)
-        sig = HashCode.Combine(sig, hasMin)
-        sig = HashCode.Combine(sig, hasMax, posRight, iconNone)
-        If s.LayoutSignature = sig Then Return
+        Dim sig As Long = HashCode.Combine(w, V3_DpiContext.FromControl(form).Dpi, bdr, bw, bh, sp, iconSize, iconPadding)
+        sig = HashCode.Combine(sig, captionPadding, hasMin)
+        sig = HashCode.Combine(sig, hasMax, hasFullScreen, posRight, iconNone,
+                               s.IsFullScreen, s.FullScreenCaptionVisible)
+        If s.LayoutSignature = sig Then
+            同步标题栏绑定控件布局(s)
+            Return
+        End If
         s.LayoutSignature = sig
 
+        s.CloseRect = Rectangle.Empty
+        s.MaxRect = Rectangle.Empty
+        s.MinRect = Rectangle.Empty
+        s.FullScreenRect = Rectangle.Empty
+        s.IconRect = Rectangle.Empty
+        If (s.IsFullScreen AndAlso Not s.FullScreenCaptionVisible) OrElse
+           captionLayoutRect.Width <= 0 OrElse captionLayoutRect.Height <= 0 Then
+            同步标题栏绑定控件布局(s)
+            Return
+        End If
+
         ' 用栈数组替代 List(Of Integer)，避免装箱 + 集合分配。
-        Dim 列表(2) As Integer
+        Dim 列表(3) As Integer
         Dim 数量 As Integer = 0
         If posRight Then
+            If hasFullScreen Then 列表(数量) = HTFULLSCREEN : 数量 += 1
             If hasMin Then 列表(数量) = HTMINBUTTON : 数量 += 1
             If hasMax Then 列表(数量) = HTMAXBUTTON : 数量 += 1
             列表(数量) = HTCLOSE : 数量 += 1
             Dim totalW As Integer = 数量 * bw + Math.Max(0, 数量 - 1) * sp
-            Dim startX As Integer = w - bdr - totalW
+            Dim startX As Integer = captionLayoutRect.Right - totalW
             For i = 0 To 数量 - 1
-                Dim r As New Rectangle(startX + i * (bw + sp), bdr, bw, bh)
-                Select Case 列表(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : End Select
+                Dim r As New Rectangle(startX + i * (bw + sp), captionLayoutRect.Top, bw, bh)
+                Select Case 列表(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : Case HTFULLSCREEN : s.FullScreenRect = r : End Select
             Next
         Else
             列表(数量) = HTCLOSE : 数量 += 1
             If hasMax Then 列表(数量) = HTMAXBUTTON : 数量 += 1
             If hasMin Then 列表(数量) = HTMINBUTTON : 数量 += 1
+            If hasFullScreen Then 列表(数量) = HTFULLSCREEN : 数量 += 1
             For i = 0 To 数量 - 1
-                Dim r As New Rectangle(bdr + i * (bw + sp), bdr, bw, bh)
-                Select Case 列表(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : End Select
+                Dim r As New Rectangle(captionLayoutRect.Left + i * (bw + sp), captionLayoutRect.Top, bw, bh)
+                Select Case 列表(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : Case HTFULLSCREEN : s.FullScreenRect = r : End Select
             Next
         End If
         If Not hasMax Then s.MaxRect = Rectangle.Empty
         If Not hasMin Then s.MinRect = Rectangle.Empty
+        If Not hasFullScreen Then s.FullScreenRect = Rectangle.Empty
 
         If Not iconNone AndAlso iconSize > 0 Then
-            Dim iconY As Integer = bdr + (bh - iconSize) \ 2
-            If Not posRight Then
-                Dim totalBtnW As Integer = 数量 * bw + Math.Max(0, 数量 - 1) * sp
-                s.IconRect = New Rectangle(bdr + totalBtnW + iconPadLeft, iconY, iconSize, iconSize)
-            Else
-                s.IconRect = New Rectangle(bdr + iconPadLeft, iconY, iconSize, iconSize)
+            Dim totalBtnW As Integer = 数量 * bw + Math.Max(0, 数量 - 1) * sp
+            Dim iconAreaLeft As Integer = If(posRight, captionLayoutRect.Left, captionLayoutRect.Left + totalBtnW)
+            Dim iconAreaRight As Integer = If(posRight, captionLayoutRect.Right - totalBtnW, captionLayoutRect.Right)
+            Dim availableWidth As Integer = Math.Max(0, iconAreaRight - iconAreaLeft - iconPadding.Horizontal)
+            Dim availableHeight As Integer = Math.Max(0, captionLayoutRect.Height - iconPadding.Vertical)
+            Dim drawSize As Integer = Math.Min(iconSize, Math.Min(availableWidth, availableHeight))
+            If drawSize > 0 Then
+                Dim iconX As Integer = iconAreaLeft + iconPadding.Left
+                Dim iconY As Integer = captionLayoutRect.Top + iconPadding.Top + (availableHeight - drawSize) \ 2
+                s.IconRect = New Rectangle(iconX, iconY, drawSize, drawSize)
             End If
-        Else
-            s.IconRect = Rectangle.Empty
         End If
+        同步标题栏绑定控件布局(s)
     End Sub
 
 #End Region
@@ -2097,12 +2743,26 @@ Public Class ThisIsYourWindow
     End Function
 
     Private Function 获取标题栏内容矩形(form As Form, w As Integer, h As Integer) As Rectangle
+        Dim state = 查找状态(form)
+        If state IsNot Nothing AndAlso state.IsFullScreen Then
+            If Not state.FullScreenCaptionVisible Then Return Rectangle.Empty
+            Return New Rectangle(0, 0, Math.Max(0, w), Math.Min(取缩放标题栏高度(form), Math.Max(0, h)))
+        End If
         Dim bdr As Integer = 取缩放边框厚度(form)
         Dim x As Integer = Math.Min(bdr, Math.Max(0, w))
         Dim y As Integer = Math.Min(bdr, Math.Max(0, h))
         Dim rw As Integer = Math.Max(0, w - bdr * 2)
         Dim rh As Integer = Math.Min(取缩放标题栏高度(form), Math.Max(0, h - bdr * 2))
         Return New Rectangle(x, y, rw, rh)
+    End Function
+
+    Private Function 获取标题栏布局矩形(form As Form) As Rectangle
+        If form Is Nothing Then Return Rectangle.Empty
+        Dim size = 获取真实客户区尺寸(form)
+        Dim captionRect As Rectangle = 获取标题栏内容矩形(form, size.Width, size.Height)
+        Dim bottomLineHeight As Integer = Math.Min(captionRect.Height, 取缩放标题栏底部横线高度(form))
+        captionRect.Height = Math.Max(0, captionRect.Height - bottomLineHeight)
+        Return 应用内边距(captionRect, 缩放逻辑内边距(form, _标题栏内容内边距))
     End Function
 
     Friend Sub RenderGpuWindow(context As D3D_PaintContext, targetForm As Form)
@@ -2133,8 +2793,12 @@ Public Class ThisIsYourWindow
             context.FillRectangle(captionRectF, _标题栏遮罩颜色)
         End If
 
+        绘制标题栏底部横线_GPU(context, s, captionRect)
         绘制图标_GPU(context, s)
         绘制控制按钮_GPU(context, s, s.CloseRect, HTCLOSE)
+        If _显示全屏按钮 AndAlso 全屏允许用于窗体(s) Then
+            绘制控制按钮_GPU(context, s, s.FullScreenRect, HTFULLSCREEN)
+        End If
         If s.HostForm.MaximizeBox Then 绘制控制按钮_GPU(context, s, s.MaxRect, HTMAXBUTTON)
         If s.HostForm.MinimizeBox Then 绘制控制按钮_GPU(context, s, s.MinRect, HTMINBUTTON)
         绘制窗口边框_GPU(context, s, w, h, active)
@@ -2196,7 +2860,8 @@ Public Class ThisIsYourWindow
     End Sub
 
     Private Sub 绘制图标_GPU(context As D3D_PaintContext, s As PerFormState)
-        If _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.ShowIcon OrElse
+           _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return
 
         Dim img As Image = Nothing
         If _图标来源 = IconSourceEnum.Custom Then
@@ -2242,8 +2907,8 @@ Public Class ThisIsYourWindow
         End If
 
         Dim buttonPadding As Padding = 缩放逻辑内边距(s.HostForm, _按钮内边距)
-        Dim vis As New RectangleF(rect.X + buttonPadding.Left, rect.Y + buttonPadding.Top,
-                                  rect.Width - buttonPadding.Horizontal, rect.Height - buttonPadding.Vertical)
+        Dim visualRect As Rectangle = 应用内边距(rect, buttonPadding)
+        Dim vis As New RectangleF(visualRect.X, visualRect.Y, visualRect.Width, visualRect.Height)
         If vis.Width <= 0 OrElse vis.Height <= 0 Then Return
 
         If bgColor.A > 0 Then
@@ -2278,10 +2943,55 @@ Public Class ThisIsYourWindow
             Case HTMINBUTTON
                 Dim mid As Single = cy + sz / 2.0F
                 context.DeviceContext.DrawLine(New Vector2(cx, mid), New Vector2(cx + sz, mid), pen, lw)
+            Case HTFULLSCREEN
+                Dim fullScreenLogicalLineWidth As Single = Math.Max(1.0F, _按钮符号线宽 - 1.0F)
+                Dim fullScreenLineWidth As Single = 缩放逻辑尺寸(s.HostForm, fullScreenLogicalLineWidth)
+                绘制全屏按钮符号_GPU(context, pen, fullScreenLineWidth, cx, cy, sz, s.IsFullScreen)
         End Select
     End Sub
 
+    Private Shared Sub 绘制全屏按钮符号_GPU(context As D3D_PaintContext,
+                                      pen As ID2D1SolidColorBrush,
+                                      lineWidth As Single,
+                                      x As Single,
+                                      y As Single,
+                                      size As Single,
+                                      restore As Boolean)
+        ' The stroke center stays half a line inside the requested glyph box, so its outer pixels
+        ' exactly reach the ButtonGlyphSize boundary without being clipped.
+        Dim edge As Single = Math.Max(0.5F, lineWidth / 2.0F)
+        Dim head As Single = Math.Max(lineWidth * 1.5F, size * 0.28F)
+        Dim center As Single = size / 2.0F
+        Dim gap As Single = Math.Max(0.5F, size * 0.035F)
+        Dim corners() As Vector2 = {
+            New Vector2(x + edge, y + edge),
+            New Vector2(x + size - edge, y + edge),
+            New Vector2(x + edge, y + size - edge),
+            New Vector2(x + size - edge, y + size - edge)}
+        Dim inner() As Vector2 = {
+            New Vector2(x + center - gap, y + center - gap),
+            New Vector2(x + center + gap, y + center - gap),
+            New Vector2(x + center - gap, y + center + gap),
+            New Vector2(x + center + gap, y + center + gap)}
+
+        For i As Integer = 0 To 3
+            Dim arrowStart As Vector2 = If(restore, corners(i), inner(i))
+            Dim arrowEnd As Vector2 = If(restore, inner(i), corners(i))
+            context.DeviceContext.DrawLine(arrowStart, arrowEnd, pen, lineWidth)
+
+            Dim sx As Single = If((i And 1) = 0, 1.0F, -1.0F)
+            Dim sy As Single = If((i And 2) = 0, 1.0F, -1.0F)
+            If restore Then
+                sx = -sx
+                sy = -sy
+            End If
+            context.DeviceContext.DrawLine(arrowEnd, New Vector2(arrowEnd.X + sx * head, arrowEnd.Y), pen, lineWidth)
+            context.DeviceContext.DrawLine(arrowEnd, New Vector2(arrowEnd.X, arrowEnd.Y + sy * head), pen, lineWidth)
+        Next
+    End Sub
+
     Private Sub 绘制窗口边框_GPU(context As D3D_PaintContext, s As PerFormState, w As Integer, h As Integer, active As Boolean)
+        If s.IsFullScreen Then Return
         Dim scaledBorderSize As Integer = 取缩放边框厚度(s.HostForm)
         If scaledBorderSize <= 0 Then Return
 
@@ -2300,6 +3010,19 @@ Public Class ThisIsYourWindow
         If w > bdr Then context.FillRectangle(New RectangleF(w - bdr, bdr, bdr, sideH), bdrColor)
     End Sub
 
+    Private Sub 绘制标题栏底部横线_GPU(context As D3D_PaintContext, s As PerFormState, captionRect As Rectangle)
+        If context Is Nothing OrElse s Is Nothing OrElse captionRect.Width <= 0 OrElse captionRect.Height <= 0 Then Return
+
+        Dim lineHeight As Integer = Math.Min(captionRect.Height, 取缩放标题栏底部横线高度(s.HostForm))
+        If lineHeight <= 0 OrElse _标题栏底部横线颜色.A = 0 Then Return
+
+        context.FillRectangle(New RectangleF(captionRect.Left,
+                                             captionRect.Bottom - lineHeight,
+                                             captionRect.Width,
+                                             lineHeight),
+                              _标题栏底部横线颜色)
+    End Sub
+
     Private Sub 绘制标题文字_GPU(context As D3D_PaintContext, s As PerFormState)
         Dim text As String = 获取标题栏渲染文本(s.HostForm)
         If String.IsNullOrEmpty(text) Then Return
@@ -2312,16 +3035,59 @@ Public Class ThisIsYourWindow
 
         Dim textRect As RectangleF = 获取标题文字布局矩形(s)
         If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
+        text = 获取省略标题文字(s, text, font, textRect.Width)
+        If String.IsNullOrEmpty(text) Then Return
 
-        Dim align As Vortice.DirectWrite.TextAlignment
+        Dim flags As TextFormatFlags = TextFormatFlags.VerticalCenter Or
+                                       TextFormatFlags.SingleLine Or
+                                       TextFormatFlags.EndEllipsis Or
+                                       TextFormatFlags.NoPadding
         Select Case _标题文字对齐
-            Case TitleAlignEnum.Center : align = Vortice.DirectWrite.TextAlignment.Center
-            Case TitleAlignEnum.Right : align = Vortice.DirectWrite.TextAlignment.Trailing
-            Case Else : align = Vortice.DirectWrite.TextAlignment.Leading
+            Case TitleAlignEnum.Center : flags = flags Or TextFormatFlags.HorizontalCenter
+            Case TitleAlignEnum.Right : flags = flags Or TextFormatFlags.Right
+            Case Else : flags = flags Or TextFormatFlags.Left
         End Select
 
-        context.DrawText(text, font, fgColor, textRect, align, ParagraphAlignment.Center)
+        context.DrawText(text, font, fgColor, textRect, flags)
     End Sub
+
+    Private Function 获取省略标题文字(s As PerFormState, text As String, font As Font, maxWidth As Single) As String
+        Dim width As Integer = Math.Max(0, CInt(Math.Floor(maxWidth)))
+        Dim signature As Integer = HashCode.Combine(text, font.FontFamily.Name, font.SizeInPoints,
+                                                    font.Style, width, V3_DpiContext.FromControl(s.HostForm).Dpi)
+        If s.TitleEllipsisSignature = signature Then Return s.TitleDisplayText
+
+        Dim result As String = text
+        Dim scale As Single = 取Dpi缩放(s.HostForm)
+        If width <= 0 Then
+            result = String.Empty
+        ElseIf D3D_TextMeasureHelper.MeasureTextWidth_D2D(text, font, scale) > width Then
+            Const ellipsis As String = "…"
+            If D3D_TextMeasureHelper.MeasureTextWidth_D2D(ellipsis, font, scale) > width Then
+                result = String.Empty
+            Else
+                Dim elementStarts As Integer() = Globalization.StringInfo.ParseCombiningCharacters(text)
+                Dim low As Integer = 0
+                Dim high As Integer = elementStarts.Length
+                While low < high
+                    Dim middle As Integer = (low + high + 1) \ 2
+                    Dim charLength As Integer = If(middle >= elementStarts.Length, text.Length, elementStarts(middle))
+                    Dim candidate As String = text.Substring(0, charLength) & ellipsis
+                    If D3D_TextMeasureHelper.MeasureTextWidth_D2D(candidate, font, scale) <= width Then
+                        low = middle
+                    Else
+                        high = middle - 1
+                    End If
+                End While
+                Dim fittedLength As Integer = If(low >= elementStarts.Length, text.Length, elementStarts(low))
+                result = text.Substring(0, fittedLength) & ellipsis
+            End If
+        End If
+
+        s.TitleEllipsisSignature = signature
+        s.TitleDisplayText = result
+        Return result
+    End Function
 
     ''' <summary>
     ''' 兼容入口：在指定窗体当前 Paint HDC 上绘制标题栏与边框。
@@ -2369,28 +3135,45 @@ Public Class ThisIsYourWindow
         End Sub
     End Class
 
+    Public Class FullScreenChangedEventArgs : Inherits EventArgs
+        Public ReadOnly Property IsFullScreen As Boolean
+        Public ReadOnly Property HostForm As Form
+        Public Sub New(isFullScreen As Boolean, form As Form)
+            Me.IsFullScreen = isFullScreen : HostForm = form
+        End Sub
+    End Class
+
 
 
 
     Private Function 获取标题文字布局矩形(s As PerFormState) As RectangleF
         If s Is Nothing OrElse s.HostForm Is Nothing Then Return RectangleF.Empty
-        Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm)
+        Dim captionRect As Rectangle = 获取标题栏布局矩形(s.HostForm)
         If captionRect.Width <= 0 OrElse captionRect.Height <= 0 Then Return RectangleF.Empty
 
         Dim leftEdge, rightEdge As Integer
         Dim titlePadLeft As Integer = Math.Max(0, 缩放逻辑尺寸(s.HostForm, _标题文字左边距))
         Dim titlePadRight As Integer = Math.Max(0, 缩放逻辑尺寸(s.HostForm, _标题文字右边距))
+        Dim iconPadRight As Integer = 缩放逻辑内边距(s.HostForm, _图标内边距).Right
         If _按钮位置 = ButtonPositionEnum.Right Then
-            leftEdge = If(Not s.IconRect.IsEmpty, s.IconRect.Right + titlePadLeft, captionRect.Left + titlePadLeft)
+            If Not s.CaptionControlRect.IsEmpty Then
+                leftEdge = s.CaptionControlRect.Right + titlePadLeft
+            Else
+                leftEdge = If(Not s.IconRect.IsEmpty, s.IconRect.Right + iconPadRight + titlePadLeft, captionRect.Left + titlePadLeft)
+            End If
             Dim btnLeft As Integer = s.CloseRect.Left
+            If Not s.FullScreenRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.FullScreenRect.Left)
             If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MaxRect.Left)
             If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MinRect.Left)
             rightEdge = btnLeft - titlePadRight
         Else
-            If Not s.IconRect.IsEmpty Then
-                leftEdge = s.IconRect.Right + titlePadLeft
+            If Not s.CaptionControlRect.IsEmpty Then
+                leftEdge = s.CaptionControlRect.Right + titlePadLeft
+            ElseIf Not s.IconRect.IsEmpty Then
+                leftEdge = s.IconRect.Right + iconPadRight + titlePadLeft
             Else
                 Dim btnRight As Integer = s.CloseRect.Right
+                If Not s.FullScreenRect.IsEmpty Then btnRight = Math.Max(btnRight, s.FullScreenRect.Right)
                 If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MaxRect.Right)
                 If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MinRect.Right)
                 leftEdge = btnRight + titlePadLeft
@@ -2496,6 +3279,7 @@ Public Class ThisIsYourWindow
         ' ── 第四步：注册拦截器 ──
         s.Interceptor = New WindowMessageInterceptor(Me, s)
         _forms(hWnd) = s
+        注册键盘过滤器()
         SyncLock _attachedFormsLock
             _attachedForms(targetForm) = Me
         End SyncLock
@@ -2514,6 +3298,7 @@ Public Class ThisIsYourWindow
         AddHandler targetForm.VisibleChanged, AddressOf 宿主窗口_VisibleChanged
         AddHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
         AddHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
+        AddHandler targetForm.StyleChanged, AddressOf 宿主窗口_StyleChanged
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
         请求V3渲染(targetForm, 获取真实客户区矩形(targetForm), True)
@@ -2538,6 +3323,11 @@ Public Class ThisIsYourWindow
 
     ''' <summary>从指定窗体分离。</summary>
     Public Sub Detach(targetForm As Form)
+        Dim s = 查找状态(targetForm)
+        If s IsNot Nothing AndAlso s.IsFullScreen AndAlso targetForm IsNot Nothing AndAlso
+           Not targetForm.IsDisposed AndAlso targetForm.IsHandleCreated AndAlso targetForm.Visible Then
+            退出全屏(s)
+        End If
         释放当前句柄附加状态(targetForm, removeAttachedRegistration:=True, removePendingAttach:=True)
     End Sub
 
@@ -2571,10 +3361,15 @@ Public Class ThisIsYourWindow
             If removeAttachedRegistration Then 移除附加注册(targetForm)
             Return
         End If
+
+        Dim wasCaptionControlHost As Boolean = ReferenceEquals(_标题栏控件宿主窗体, targetForm)
+        If wasCaptionControlHost Then 恢复标题栏控件原始布局()
         _forms.Remove(key)
+        If _forms.Count = 0 Then 注销键盘过滤器()
         If removeAttachedRegistration Then 移除附加注册(targetForm)
 
         s.CachedIconBitmap?.Dispose()
+        停止全屏标题栏隐藏计时器(s)
         ' 窗口级 D3D compositor 会在 Form.HandleDestroyed 时释放图形资源，这里无需重复清理。
         s.Interceptor?.ReleaseHandle()
         销毁阴影(s)
@@ -2597,7 +3392,13 @@ Public Class ThisIsYourWindow
         RemoveHandler targetForm.VisibleChanged, AddressOf 宿主窗口_VisibleChanged
         RemoveHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
         RemoveHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
+        RemoveHandler targetForm.StyleChanged, AddressOf 宿主窗口_StyleChanged
         targetForm.Padding = s.OriginalPadding
+
+        If wasCaptionControlHost AndAlso removeAttachedRegistration Then
+            _标题栏控件宿主窗体 = Nothing
+            同步所有标题栏绑定控件布局()
+        End If
     End Sub
 
     Private Sub 移除附加注册(targetForm As Form)
@@ -2632,6 +3433,11 @@ Public Class ThisIsYourWindow
         Dim s = 查找状态(targetForm)
         If s Is Nothing Then
             Attach(targetForm)
+            Return
+        End If
+
+        If s.IsFullScreen Then
+            应用全屏窗口外观(s, Screen.FromHandle(targetForm.Handle).Bounds)
             Return
         End If
 
@@ -2691,13 +3497,14 @@ Public Class ThisIsYourWindow
 
     Friend Function 执行命中测试(s As PerFormState, clientPoint As Point) As Integer
         If s Is Nothing Then Return HTCLIENT
+        If s.IsFullScreen AndAlso Not s.FullScreenCaptionVisible Then Return HTCLIENT
         Dim clientSize = 获取真实客户区尺寸(s.HostForm)
         Dim w As Integer = clientSize.Width
         Dim h As Integer = clientSize.Height
         Dim bw As Integer = Math.Max(1, 缩放逻辑尺寸(s.HostForm, _调整边框宽度))
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
 
-        If _允许调整大小 AndAlso Not (zoomed AndAlso _最大化时隐藏调整边框) Then
+        If Not s.IsFullScreen AndAlso _允许调整大小 AndAlso Not (zoomed AndAlso _最大化时隐藏调整边框) Then
             If clientPoint.X < bw AndAlso clientPoint.Y < bw Then Return HTTOPLEFT
             If clientPoint.X >= w - bw AndAlso clientPoint.Y < bw Then Return HTTOPRIGHT
             If clientPoint.X < bw AndAlso clientPoint.Y >= h - bw Then Return HTBOTTOMLEFT
@@ -2709,9 +3516,11 @@ Public Class ThisIsYourWindow
         End If
 
         If Not s.CloseRect.IsEmpty AndAlso s.CloseRect.Contains(clientPoint) Then Return HTCLOSE
+        If Not s.FullScreenRect.IsEmpty AndAlso s.FullScreenRect.Contains(clientPoint) Then Return HTFULLSCREEN
         If Not s.MaxRect.IsEmpty AndAlso s.MaxRect.Contains(clientPoint) Then Return HTMAXBUTTON
         If Not s.MinRect.IsEmpty AndAlso s.MinRect.Contains(clientPoint) Then Return HTMINBUTTON
         If Not s.IconRect.IsEmpty AndAlso s.IconRect.Contains(clientPoint) Then Return HTSYSMENU
+        If Not s.CaptionControlRect.IsEmpty AndAlso s.CaptionControlRect.Contains(clientPoint) Then Return HTCLIENT
 
         Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm, w, h)
         If captionRect.Contains(clientPoint) Then
@@ -2792,19 +3601,20 @@ Public Class ThisIsYourWindow
 
                     If hit = HTCLIENT AndAlso
                        sysResult >= HTLEFT AndAlso sysResult <= HTBOTTOMRIGHT AndAlso
+                       Not _state.IsFullScreen AndAlso
                        _owner._允许调整大小 AndAlso
                        Not (IsZoomed(_state.HostForm.Handle) AndAlso _owner._最大化时隐藏调整边框) Then
                         hit = sysResult
                     End If
 
                     Dim oldHover As Integer = _state.HoverHit
-                    _state.HoverHit = If(hit = HTCLOSE OrElse hit = HTMAXBUTTON OrElse hit = HTMINBUTTON, hit, HTNOWHERE)
+                    _state.HoverHit = If(hit = HTCLOSE OrElse hit = HTFULLSCREEN OrElse hit = HTMAXBUTTON OrElse hit = HTMINBUTTON, hit, HTNOWHERE)
                     If oldHover <> _state.HoverHit Then _owner.InvalidateCaption(_state.HostForm)
                     m.Result = New IntPtr(hit)
                     Return
 
                 Case WM_NCCALCSIZE
-                    If m.WParam <> IntPtr.Zero AndAlso IsZoomed(_state.HostForm.Handle) Then
+                    If m.WParam <> IntPtr.Zero AndAlso Not _state.IsFullScreen AndAlso IsZoomed(_state.HostForm.Handle) Then
                         Dim scr = Screen.FromHandle(_state.HostForm.Handle)
                         Dim wa = scr.WorkingArea
                         Dim r As RECT : r.Left = wa.Left : r.Top = wa.Top : r.Right = wa.Right : r.Bottom = wa.Bottom
@@ -2934,11 +3744,12 @@ Public Class ThisIsYourWindow
 
                 Case WM_NCLBUTTONDOWN
                     Dim htDown As Integer = CInt(m.WParam.ToInt64())
+                    If _state.IsFullScreen AndAlso htDown = HTCAPTION Then Return
                     If htDown = HTSYSMENU Then
                         _owner.ShowSystemMenuAtIcon(_state)
                         Return
                     End If
-                    If htDown = HTCLOSE OrElse htDown = HTMAXBUTTON OrElse htDown = HTMINBUTTON Then
+                    If htDown = HTCLOSE OrElse htDown = HTFULLSCREEN OrElse htDown = HTMAXBUTTON OrElse htDown = HTMINBUTTON Then
                         _state.PressedHit = htDown
                         _state.HoverHit = htDown
                         _owner.InvalidateCaption(_state.HostForm)
@@ -2949,6 +3760,7 @@ Public Class ThisIsYourWindow
                     Return
 
                 Case WM_NCLBUTTONDBLCLK
+                    If _state.IsFullScreen Then Return
                     If CInt(m.WParam.ToInt64()) = HTCAPTION AndAlso Not _state.HostForm.MaximizeBox Then
                         Return
                     End If
@@ -2970,6 +3782,9 @@ Public Class ThisIsYourWindow
                     Return
 
                 Case WM_MOUSEMOVE
+                    If _state.IsFullScreen Then
+                        _owner.处理全屏鼠标移动(_state, 解析LParam坐标(m.LParam))
+                    End If
                     If _state.PressedHit <> HTNOWHERE Then
                         Dim hit As Integer = _owner.执行命中测试(_state, 解析LParam坐标(m.LParam))
                         Dim newHover As Integer = If(hit = _state.PressedHit, hit, HTNOWHERE)
@@ -2993,6 +3808,8 @@ Public Class ThisIsYourWindow
                         If hit = released Then
                             Select Case released
                                 Case HTCLOSE : _state.HostForm?.Close()
+                                Case HTFULLSCREEN
+                                    If _state.HostForm IsNot Nothing Then _owner.ToggleFullScreen(_state.HostForm)
                                 Case HTMAXBUTTON
                                     If _state.HostForm IsNot Nothing Then
                                         _owner.切换动画样式(_state.HostForm.Handle, True)

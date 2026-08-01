@@ -74,8 +74,8 @@ Public Class ModernButton
         Dim 内容矩形区域 As New RectangleF(
             极限矩形区域.X + Me.Padding.Left,
             极限矩形区域.Y + Me.Padding.Top,
-            极限矩形区域.Width - Me.Padding.Horizontal,
-            极限矩形区域.Height - Me.Padding.Vertical)
+            Math.Max(0.0F, 极限矩形区域.Width - Me.Padding.Horizontal),
+            Math.Max(0.0F, 极限矩形区域.Height - Me.Padding.Vertical))
         Dim 图标宽度 As Single = 计算图标占用的水平宽度(内容矩形区域, s)
 
         If _backgroundSource IsNot Nothing Then
@@ -123,7 +123,7 @@ Public Class ModernButton
 
         Dim geo As ID2D1Geometry = Nothing
         If 是否有圆角 Then geo = context.GetRoundedRectangleGeometry(极限矩形区域, radius)
-        绘制背景图片_GPU(context, 极限矩形区域, geo)
+        绘制背景图片_GPU(context, 内容矩形区域, geo)
         绘制长按遮罩_GPU(context, 极限矩形区域, geo)
 
         If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
@@ -134,14 +134,14 @@ Public Class ModernButton
     End Sub
 
     Private Sub 绘制背景图片_GPU(context As D3D_PaintContext, area As RectangleF, geo As ID2D1Geometry)
-        If 背景图片 Is Nothing Then Return
+        If 背景图片 Is Nothing OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return
         Dim clipped As Boolean
         If geo IsNot Nothing Then
             PushGeometryClip_GPU(context, geo, area)
             clipped = True
         End If
         Try
-            context.DrawImage(背景图片, area)
+            context.DrawImage(背景图片, area, interpolation:=InterpolationMode.HighQualityCubic)
         Finally
             If clipped Then context.DeviceContext.PopLayer()
         End Try
@@ -176,7 +176,9 @@ Public Class ModernButton
         If 图标 Is Nothing OrElse iconSize <= 0 Then Return
         Dim iconX As Single = 内容矩形区域.X + 图标边距 * s
         Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
-        context.DrawImage(图标, New RectangleF(iconX, iconY, iconSize, iconSize))
+        context.DrawImage(图标,
+                          New RectangleF(iconX, iconY, iconSize, iconSize),
+                          interpolation:=InterpolationMode.HighQualityCubic)
     End Sub
 
     Private Sub 绘制文本_GPU(context As D3D_PaintContext, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single)
@@ -602,6 +604,10 @@ Public Class ModernButton
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        请求V3渲染()
+    End Sub
+    Protected Overrides Sub OnPaddingChanged(e As EventArgs)
+        MyBase.OnPaddingChanged(e)
         请求V3渲染()
     End Sub
 #End Region

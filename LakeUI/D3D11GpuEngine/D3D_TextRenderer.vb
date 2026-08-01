@@ -1,3 +1,4 @@
+Imports System.Numerics
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
 
@@ -10,8 +11,8 @@ End Enum
 
 ''' <summary>
 ''' D3D_TextRenderer 是新核心唯一的文字绘制入口。
-''' 它集中管理 ClearType/MacType 兼容、Outline 高质量策略位、Grayscale 透明目标稳定路线，并允许 Auto 根据 target alpha 选择。
-''' 当前基础实现先通过 DirectWrite/D2D 文本入口完成模式切换；后续如果需要真正几何描边或独立 text layer，必须扩展本类，不能让控件绕过核心自建文字管线。
+''' 它集中应用 GlobalOptions.GlobalTextQuality，并管理 DirectWrite 文本格式缓存。
+''' Outline 通过 D3D_D2DInterop 的自定义 RenderingParams 强制使用字形轮廓；控件不能绕过核心自建文字管线。
 ''' 文本测量可复用 DirectWrite 服务，但绘制入口必须通过本类。
 ''' ClearType 在透明 composition target 上可能不稳定，因此 text target 策略必须显式。
 ''' </summary>
@@ -28,22 +29,12 @@ Public NotInheritable Class D3D_TextRenderer
     End Sub
 
     ''' <summary>
-    ''' 设置当前 DeviceContext 的文字抗锯齿模式。透明 target 默认走 Grayscale，非透明 target 可走 ClearTypeCompatible。
+    ''' 将全局图形与文字质量应用到当前 DeviceContext。
+    ''' mode 与 targetHasAlpha 为旧合成器接口保留；全局设置始终具有最终决定权。
     ''' </summary>
     Public Sub ConfigureDeviceContext(context As ID2D1DeviceContext, mode As D3D_TextQualityMode, targetHasAlpha As Boolean)
         If context Is Nothing Then Return
-
-        Select Case ResolveMode(mode, targetHasAlpha)
-            Case D3D_TextQualityMode.ClearTypeCompatible
-                context.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Cleartype
-                context.TextRenderingParams = Nothing
-            Case D3D_TextQualityMode.Outline
-                context.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale
-                context.TextRenderingParams = Nothing
-            Case Else
-                context.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale
-                context.TextRenderingParams = Nothing
-        End Select
+        D3D_D2DInterop.ApplyGlobalQuality(context)
     End Sub
 
     Public Sub DrawText(context As D3D_PaintContext,
@@ -81,6 +72,17 @@ Public NotInheritable Class D3D_TextRenderer
         If format Is Nothing OrElse brush Is Nothing Then Return
 
         context.DeviceContext.DrawText(text, format, D3D_PaintContext.ToRawRect(layoutRect), brush, DrawTextOptions.Clip)
+    End Sub
+
+    Public Sub DrawTextLayout(context As D3D_PaintContext,
+                              layout As IDWriteTextLayout,
+                              color As System.Drawing.Color,
+                              origin As Vector2)
+        If context Is Nothing OrElse context.DeviceContext Is Nothing OrElse layout Is Nothing OrElse color.A = 0 Then Return
+
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If brush Is Nothing Then Return
+        context.DeviceContext.DrawTextLayout(origin, layout, brush, DrawTextOptions.Clip)
     End Sub
 
     Public Sub Invalidate()
@@ -152,11 +154,6 @@ Public NotInheritable Class D3D_TextRenderer
     Private Shared Function ShouldWordWrap(flags As TextFormatFlags) As Boolean
         Return (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak AndAlso
                (flags And TextFormatFlags.SingleLine) <> TextFormatFlags.SingleLine
-    End Function
-
-    Private Shared Function ResolveMode(mode As D3D_TextQualityMode, targetHasAlpha As Boolean) As D3D_TextQualityMode
-        If mode <> D3D_TextQualityMode.Auto Then Return mode
-        Return If(targetHasAlpha, D3D_TextQualityMode.Grayscale, D3D_TextQualityMode.ClearTypeCompatible)
     End Function
 
     Private Function NextClock() As Long

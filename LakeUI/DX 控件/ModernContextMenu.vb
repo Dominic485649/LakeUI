@@ -35,8 +35,19 @@ Public Class ModernContextMenu
 
 #Region "属性"
 
-    Private 背景颜色 As Color = Color.FromArgb(36, 36, 36)
-    <Category("LakeUI"), Description("背景颜色"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
+    Private 背景底色 As Color = Color.FromArgb(36, 36, 36)
+    <Category("LakeUI"), Description("背景底色。非不透明时会先取样菜单下方的画面，再按 Alpha 叠加此颜色。"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
+    Public Property BackColor As Color
+        Get
+            Return 背景底色
+        End Get
+        Set(value As Color)
+            SetValue(背景底色, value)
+        End Set
+    End Property
+
+    Private 背景颜色 As Color = Color.Transparent
+    <Category("LakeUI"), Description("背景覆盖颜色，绘制在 BackColor 或 Backdrop 之上。"), DefaultValue(GetType(Color), "Transparent"), Browsable(True)>
     Public Property BackColor1 As Color
         Get
             Return 背景颜色
@@ -211,6 +222,18 @@ Public Class ModernContextMenu
         End Set
     End Property
 
+    Private 勾选大小 As Integer = 10
+    <Category("LakeUI"), Description("勾选标记大小"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    Public Property CheckMarkSize As Integer
+        Get
+            Return 勾选大小
+        End Get
+        Set(value As Integer)
+            If value < 2 Then value = 2
+            SetValue(勾选大小, value)
+        End Set
+    End Property
+
     Private 箭头颜色 As Color = Color.Silver
     <Category("LakeUI"), Description("子菜单箭头颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property ArrowColor As Color
@@ -273,11 +296,12 @@ Public Class ModernContextMenu
 
     Friend ReadOnly Property 有效图标列宽度 As Integer
         Get
-            If 图标大小 > 0 Then Return 图标大小
             For Each item In 项目列表
-                If Not item.IsSeparator AndAlso Not item.IsDescription AndAlso item.Checked Then Return 勾选最小宽度
+                If Not item.IsSeparator AndAlso Not item.IsDescription AndAlso item.Checked Then
+                    Return Math.Max(图标大小, Math.Max(勾选最小宽度, 勾选大小))
+                End If
             Next
-            Return 0
+            Return 图标大小
         End Get
     End Property
 
@@ -630,12 +654,19 @@ Public Class ModernContextMenu
         Friend Sub New(menu As ModernContextMenu, parent As MenuPopupForm)
             菜单 = menu
             父弹窗 = parent
-            BackColor = menu.BackColor1
+            ' 顶层 Form 不接受透明 BackColor；实际透明效果由背景抓取帧完成。
+            BackColor = 获取窗体回退背景色(menu)
             SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
 
             动画计时器 = 创建动画计时器(menu.动画帧率)
             展开关闭计时器 = 创建动画计时器(menu.动画帧率)
         End Sub
+
+        Private Shared Function 获取窗体回退背景色(menu As ModernContextMenu) As Color
+            If menu.背景底色.A = 255 Then Return menu.背景底色
+            If menu.背景颜色.A = 255 Then Return menu.背景颜色
+            Return Color.FromArgb(36, 36, 36)
+        End Function
 
         Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
             If fps <= 0 Then Return 1
@@ -739,16 +770,33 @@ Public Class ModernContextMenu
 
         Private Sub 准备毛玻璃背景()
             If _backdrop Is Nothing Then _backdrop = New D3D_PopupBackdropRenderer(Me)
-            _backdrop.TransientExcludeOnCapture = False
-            _backdrop.Configure(ToPopupBackdropMode(菜单.毛玻璃模式),
-                                菜单.毛玻璃图片,
-                                菜单.毛玻璃Tint颜色,
-                                菜单.毛玻璃模糊半径,
-                                菜单.毛玻璃模糊次数,
-                                菜单.毛玻璃下采样,
-                                菜单.毛玻璃噪点不透明度,
-                                菜单.毛玻璃噪点缩放)
+            Dim samplesUnderlyingBackground As Boolean =
+                菜单.毛玻璃模式 = BackdropModeEnum.None AndAlso 菜单.背景底色.A < 255
+            _backdrop.TransientExcludeOnCapture = samplesUnderlyingBackground
+
+            If samplesUnderlyingBackground Then
+                ' 与控件 BackgroundSource 的语义一致：先取得底层成品画面，再叠加半透明背景色。
+                ' passes=0 会保留原始像素，并强制使用 1:1 采样，不产生 Backdrop 模糊。
+                _backdrop.Configure(PopupBackdropMode.Auto,
+                                    Nothing,
+                                    Color.Transparent,
+                                    1,
+                                    0,
+                                    1,
+                                    0,
+                                    1.0F)
+            Else
+                _backdrop.Configure(ToPopupBackdropMode(菜单.毛玻璃模式),
+                                    菜单.毛玻璃图片,
+                                    菜单.毛玻璃Tint颜色,
+                                    菜单.毛玻璃模糊半径,
+                                    菜单.毛玻璃模糊次数,
+                                    菜单.毛玻璃下采样,
+                                    菜单.毛玻璃噪点不透明度,
+                                    菜单.毛玻璃噪点缩放)
+            End If
             _backdrop.Prepare(Me.Bounds, True)
+            If samplesUnderlyingBackground Then _backdrop.WaitForFrame(250)
         End Sub
 
         Private Sub 计算布局()
@@ -836,11 +884,16 @@ Public Class ModernContextMenu
         End Function
 
         Private Sub DrawGraphicsContent_GPU(context As D3D_PaintContext, hasBackdrop As Boolean)
+            Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+            Dim explicitBackdrop As Boolean = 菜单.毛玻璃模式 <> BackdropModeEnum.None
+
             If Not hasBackdrop Then
-                context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 菜单.背景颜色)
-            ElseIf 菜单.背景颜色.A > 0 AndAlso 菜单.背景颜色.A < 255 Then
-                context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 菜单.背景颜色)
+                If 菜单.背景底色.A > 0 Then context.FillRectangle(bounds, 菜单.背景底色)
+            ElseIf Not explicitBackdrop AndAlso 菜单.背景底色.A > 0 Then
+                context.FillRectangle(bounds, 菜单.背景底色)
             End If
+
+            If 菜单.背景颜色.A > 0 Then context.FillRectangle(bounds, 菜单.背景颜色)
 
             If 菜单.边框宽度 > 0 Then
                 Dim bw As Single = Math.Max(1.0F, 菜单.边框宽度 * DpiScale())
@@ -946,12 +999,28 @@ Public Class ModernContextMenu
         Private Sub DrawCheckMark_GPU(context As D3D_PaintContext, rect As RectangleF)
             Dim cx As Single = rect.X + rect.Width / 2.0F
             Dim cy As Single = rect.Y + rect.Height / 2.0F
-            Dim s As Single = rect.Height * 0.18F
-            Dim pw As Single = Math.Max(1.6F, rect.Height * 0.08F)
+            Dim markSize As Single = 菜单.勾选大小 * DpiScale()
+            Dim s As Single = markSize / 2.0F
+            Dim pw As Single = Math.Max(1.6F * DpiScale(), markSize * 0.2F)
             Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 菜单.勾选颜色, context.DeviceGeneration)
-            context.DeviceContext.DrawLine(New Vector2(cx - s, cy), New Vector2(cx - s * 0.35F, cy + s * 0.85F), b, pw)
-            context.DeviceContext.DrawLine(New Vector2(cx - s * 0.35F, cy + s * 0.85F), New Vector2(cx + s, cy - s), b, pw)
+            Dim key = $"modern-context-checkmark:{BitConverter.SingleToInt32Bits(cx)}:{BitConverter.SingleToInt32Bits(cy)}:{BitConverter.SingleToInt32Bits(s)}"
+            Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(key, Function() 创建勾选几何_GPU(cx, cy, s))
+            If geo IsNot Nothing AndAlso b IsNot Nothing Then
+                context.DeviceContext.DrawGeometry(geo, b, pw, D3D_D2DInterop.GetRoundStrokeStyle())
+            End If
         End Sub
+
+        Private Shared Function 创建勾选几何_GPU(cx As Single, cy As Single, s As Single) As ID2D1Geometry
+            Dim geo = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+            Using sink = geo.Open()
+                sink.BeginFigure(New Vector2(cx - s, cy), FigureBegin.Hollow)
+                sink.AddLine(New Vector2(cx - s * 0.35F, cy + s * 0.85F))
+                sink.AddLine(New Vector2(cx + s, cy - s))
+                sink.EndFigure(FigureEnd.Open)
+                sink.Close()
+            End Using
+            Return geo
+        End Function
 
         Private Sub DrawArrow_GPU(context As D3D_PaintContext, rect As Rectangle)
             Dim cx As Single = rect.X + rect.Width / 2.0F

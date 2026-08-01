@@ -14,17 +14,32 @@ Public Module D3D_TextInterop
                                 dpiScale As Single,
                                 Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing) As Size
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return Size.Empty
+        Dim measured = MeasureSizeCore(text, font, proposedSize, flags, dpiScale, textFormatCache)
+        Return New Size(
+            CInt(Math.Ceiling(Math.Max(0.0F, measured.Width))),
+            CInt(Math.Ceiling(Math.Max(0.0F, measured.Height))))
+    End Function
+
+    ''' <summary>测量 TextLayout 的原始浮点 Metrics；适合分段布局后统一取整。</summary>
+    Public Function MeasureSize(text As String, font As Font, dpiScale As Single,
+                                Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing) As SizeF
+        If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return SizeF.Empty
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
+        Return MeasureSizeCore(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale, textFormatCache)
+    End Function
+
+    Private Function MeasureSizeCore(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags,
+                                     dpiScale As Single, textFormatCache As D3D_D2DInterop.TextFormatCache) As SizeF
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
-        If fmt Is Nothing Then Return Size.Empty
+        If fmt Is Nothing Then Return SizeF.Empty
         Try
             Dim layoutW As Single = NormalizeLayoutExtent(proposedSize.Width)
             Dim layoutH As Single = NormalizeLayoutExtent(proposedSize.Height)
             Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, layoutW, layoutH)
                 Dim m = layout.Metrics
-                Return New Size(
-                    CInt(Math.Ceiling(Math.Max(0.0F, m.WidthIncludingTrailingWhitespace))),
-                    CInt(Math.Ceiling(Math.Max(0.0F, m.Height))))
+                Return New SizeF(Math.Max(0.0F, m.WidthIncludingTrailingWhitespace),
+                                 Math.Max(0.0F, m.Height))
             End Using
         Finally
             If ownsFormat AndAlso fmt IsNot Nothing Then
@@ -47,15 +62,6 @@ Public Module D3D_TextInterop
         If font Is Nothing Then Return 0
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         Return MeasureText("Ag", font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale, textFormatCache).Height
-    End Function
-
-    ''' <summary>测量 TextLayout 的完整 Metrics（宽 + 高）；调用方可用于精确布局。</summary>
-    Public Function MeasureSize(text As String, font As Font, dpiScale As Single,
-                                Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing) As SizeF
-        If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return SizeF.Empty
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Dim sz = MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale, textFormatCache)
-        Return New SizeF(sz.Width, sz.Height)
     End Function
 
     Private Function AcquireTextFormat(font As Font, dpiScale As Single, flags As TextFormatFlags,

@@ -533,7 +533,7 @@ Public Class UltraDetailListView
     Private _rowBottoms As Integer() = Array.Empty(Of Integer)()
 
     Private Sub 重建显示列表()
-        隐藏截断提示()
+        Dim 需要重验证截断提示 As Boolean = 截断提示当前可见() OrElse 截断提示正在等待显示()
         取消标签编辑等待()
         If _editTextBox IsNot Nothing Then 结束标签编辑(True)
 
@@ -642,6 +642,7 @@ Public Class UltraDetailListView
         _hoverAnimActive = False
         _hoverRowIndex = -1
         _columnXDirty = True
+        If 需要重验证截断提示 Then 重验证活动截断提示()
     End Sub
 
     ''' <summary>计算每行 Top/Spacing 并填充 _rowTops/_rowBottoms 数组。
@@ -2564,7 +2565,8 @@ Public Class UltraDetailListView
             End If
 
             If row.Type = DisplayRowType.GroupHeader Then
-                绘制分组标题行形状_GPU(context, row.Group, rowRect)
+                ' 分组背景与项焦点区域保持一致，不能延伸到可视区域的最右侧。
+                绘制分组标题行形状_GPU(context, row.Group, itemFocusRect)
             Else
                 If _selectedIndices.Contains(i) Then
                     绘制项焦点区域_GPU(context, itemFocusRect, 项选中背景颜色, Color.Empty, 0)
@@ -2606,6 +2608,7 @@ Public Class UltraDetailListView
         Dim lastDrawnIndex As Integer = _scrollOffset - 1
 
         Dim availW As Integer = 获取行绘制宽度(contentRect)
+        Dim itemFocusW As Integer = 获取项焦点宽度(contentRect)
         确保列X缓存()
 
         For i As Integer = _scrollOffset To _displayRows.Count - 1
@@ -2623,7 +2626,9 @@ Public Class UltraDetailListView
             End If
 
             If row.Type = DisplayRowType.GroupHeader Then
-                绘制分组标题行_GPU(context, row.Group, rowRect)
+                ' 分组文字的边界必须与分组背景及项焦点宽度一致。
+                Dim groupRect As New Rectangle(contentRect.X, currentY, itemFocusW, rowH)
+                绘制分组标题行_GPU(context, row.Group, groupRect)
             Else
                 绘制项行_GPU(context, row.Item, rowRect, i)
             End If
@@ -4013,6 +4018,60 @@ Public Class UltraDetailListView
         Return _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible
     End Function
 
+    Private Function 截断提示正在等待显示() As Boolean
+        Return _truncTooltipShowTimer IsNot Nothing AndAlso
+            _truncTooltipShowTimer.Enabled AndAlso
+            Not String.IsNullOrEmpty(_pendingTruncTooltipText)
+    End Function
+
+    Private Sub 重验证活动截断提示()
+        Dim tipVisible As Boolean = 截断提示当前可见()
+        Dim tipPending As Boolean = 截断提示正在等待显示()
+        If Not tipVisible AndAlso Not tipPending Then Return
+
+        If IsDisposed OrElse Not Visible OrElse Not Enabled Then
+            隐藏截断提示()
+            Return
+        End If
+
+        Dim screenPointer As Point = Control.MousePosition
+        If tipVisible AndAlso _truncTooltip.ContainsScreenPoint(screenPointer) Then
+            _truncTooltip.CancelScheduledClose()
+            Return
+        End If
+
+        Dim pointer As Point = PointToClient(screenPointer)
+        If Not ClientRectangle.Contains(pointer) Then
+            延迟隐藏截断提示(True)
+            Return
+        End If
+
+        Dim sourceRect As Rectangle = Rectangle.Empty
+        Dim text As String = 获取截断文本(pointer, sourceRect)
+        If String.IsNullOrEmpty(text) OrElse sourceRect.IsEmpty Then
+            隐藏截断提示()
+            Return
+        End If
+
+        Dim sourceScreenRect As Rectangle = RectangleToScreen(sourceRect)
+        If tipVisible Then
+            取消待显示截断提示()
+            _truncTooltip.CancelScheduledClose()
+            If String.Equals(text, _truncTooltipText, StringComparison.Ordinal) AndAlso
+               sourceScreenRect = _truncTooltipSourceScreenRect Then Return
+            ' 布局刷新后目标仍有效时复用现有窗口，避免重绘造成提示反复销毁和创建。
+            显示截断提示(text, sourceScreenRect, pointer)
+            Return
+        End If
+
+        If String.Equals(text, _pendingTruncTooltipText, StringComparison.Ordinal) Then
+            ' 仅更新重建后的命中区域，不重启等待计时。
+            _pendingTruncTooltipSourceScreenRect = sourceScreenRect
+        Else
+            安排显示截断提示(text, sourceScreenRect)
+        End If
+    End Sub
+
     Private Sub 刷新可见截断提示样式()
         If 截断提示当前可见() Then 更新截断提示(PointToClient(Cursor.Position), True)
     End Sub
@@ -4174,7 +4233,7 @@ Public Class UltraDetailListView
 
         If row.Type = DisplayRowType.GroupHeader Then
             Dim groupContentRect = 获取内容区域()
-            Dim groupRowRect As New Rectangle(groupContentRect.X, rowY, 获取行绘制宽度(groupContentRect), row.Height)
+            Dim groupRowRect As New Rectangle(groupContentRect.X, rowY, 获取项焦点宽度(groupContentRect), row.Height)
             Dim arrowSize As Integer = Dpi(12)
             Dim arrowMargin As Integer = Dpi(10)
             Dim textX As Integer = groupRowRect.X + arrowMargin + arrowSize + Dpi(6)
