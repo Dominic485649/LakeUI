@@ -1031,8 +1031,6 @@ Public Class ModernFontDialog
 
         绘制复选框_GPU(context, l.StrikeoutSwitch, _strikeoutChecked)
         绘制复选框_GPU(context, l.UnderlineSwitch, _underlineChecked)
-        绘制按钮_GPU(context, l.ButtonOK, FontDialogButtonKind.OK)
-        绘制按钮_GPU(context, l.ButtonCancel, FontDialogButtonKind.Cancel)
     End Sub
 
     Private Sub 绘制D2D文字层_GPU(context As D3D_PaintContext)
@@ -1066,6 +1064,8 @@ Public Class ModernFontDialog
         MessageDialogRendering.DrawText(context, 取界面文本("Underline", "下划线"), Font, l.UnderlineText, ForeColor, flagsMiddleLeft, s)
 
         绘制预览文本_GPU(context)
+        绘制按钮_GPU(context, l.ButtonOK, FontDialogButtonKind.OK)
+        绘制按钮_GPU(context, l.ButtonCancel, FontDialogButtonKind.Cancel)
         MessageDialogRendering.DrawText(context, 取界面文本("OK", "确定"), Font, l.ButtonOK, ForeColor, flagsCenter, s)
         MessageDialogRendering.DrawText(context, 取界面文本("Cancel", "取消"), Font, l.ButtonCancel, ForeColor, flagsCenter, s)
     End Sub

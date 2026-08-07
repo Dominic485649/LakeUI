@@ -645,20 +645,27 @@ Public Class HtmlColorLabel
     End Function
 
     Private Function 计算文本布局(最大宽度 As Integer) As List(Of 渲染行)
+        Return 计算文本布局(MyBase.Text, 最大宽度, True)
+    End Function
+
+    Private Function 计算文本布局(待测量文本 As String, 最大宽度 As Integer,
+                                 允许缓存 As Boolean) As List(Of 渲染行)
         ' 命中缓存：相同文本/宽度/字体版本下直接复用上次布局结果。
-        If 缓存布局行表 IsNot Nothing AndAlso
+        If 允许缓存 AndAlso 缓存布局行表 IsNot Nothing AndAlso
            最大宽度 = 缓存布局宽度 AndAlso
-           Object.ReferenceEquals(缓存布局文本, MyBase.Text) AndAlso
+           Object.ReferenceEquals(缓存布局文本, 待测量文本) AndAlso
            缓存布局字体版本 = 字体版本 Then
             Return 缓存布局行表
         End If
-        Dim 片段列表 = 解析为片段列表(MyBase.Text)
+        Dim 片段列表 = 解析为片段列表(待测量文本)
         Dim 行列表 As New List(Of 渲染行)
         If 片段列表.Count = 0 AndAlso Not ShouldShowInfoIcon() Then
-            缓存布局行表 = 行列表
-            缓存布局宽度 = 最大宽度
-            缓存布局文本 = MyBase.Text
-            缓存布局字体版本 = 字体版本
+            If 允许缓存 Then
+                缓存布局行表 = 行列表
+                缓存布局宽度 = 最大宽度
+                缓存布局文本 = 待测量文本
+                缓存布局字体版本 = 字体版本
+            End If
             Return 行列表
         End If
         Dim 默认行高 As Integer = CInt(Math.Ceiling(测量文本尺寸("A", Me.Font).Height))
@@ -723,10 +730,12 @@ Public Class HtmlColorLabel
         End If
         If 当前行.行高 = 0 Then 当前行.行高 = 默认行高
         提交渲染行(当前行, 行列表)
-        缓存布局行表 = 行列表
-        缓存布局宽度 = 最大宽度
-        缓存布局文本 = MyBase.Text
-        缓存布局字体版本 = 字体版本
+        If 允许缓存 Then
+            缓存布局行表 = 行列表
+            缓存布局宽度 = 最大宽度
+            缓存布局文本 = 待测量文本
+            缓存布局字体版本 = 字体版本
+        End If
         Return 行列表
     End Function
 
@@ -1007,6 +1016,16 @@ Public Class HtmlColorLabel
     ''' <summary>依据文本、内边距与边框计算控件的最佳尺寸；仅在 <see cref="AutoSize"/> 开启时计算文本占用。</summary>
     Public Overrides Function GetPreferredSize(proposedSize As Size) As Size
         If Not 启用自动尺寸 Then Return Me.Size
+        Return 计算首选尺寸(MyBase.Text, proposedSize, True)
+    End Function
+
+    ''' <summary>使用当前控件的字体、DPI、HTML 样式和内边距测量指定文本，不改变实际显示内容。</summary>
+    Public Function GetPreferredSizeForText(text As String, proposedSize As Size) As Size
+        Return 计算首选尺寸(If(text, String.Empty), proposedSize, False)
+    End Function
+
+    Private Function 计算首选尺寸(待测量文本 As String, proposedSize As Size,
+                                   允许缓存 As Boolean) As Size
         ' RenderGpu 仅在存在边框时将内容区域向内收缩；自动尺寸必须使用同一物理厚度，
         ' 否则 BorderSize = 0 也会多出 1px，导致 Padding.Top 在视觉上偏大。
         Dim 边框额外 As Integer = If(边框宽度 > 0,
@@ -1023,7 +1042,7 @@ Public Class HtmlColorLabel
             最大约束宽度 = Integer.MaxValue
         End If
         最大约束宽度 = Math.Max(1, 最大约束宽度)
-        Dim 行列表 = 计算文本布局(最大约束宽度)
+        Dim 行列表 = 计算文本布局(待测量文本, 最大约束宽度, 允许缓存)
         Dim 总高度 As Integer = 0
         Dim 内容最大宽度 As Single = 0
         For Each 行 In 行列表
