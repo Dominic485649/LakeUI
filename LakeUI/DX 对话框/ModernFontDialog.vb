@@ -539,7 +539,6 @@ Public Class ModernFontDialog
 
         Dim rightX As Single = display.X + leftW
         Dim rightW As Single = Math.Max(1.0F, display.Right - rightX)
-        Dim bottomTop As Single = display.Bottom - bottomH
         Dim previewTop As Single = display.Y + topH
 
         Dim layout As New FontDialogD2DLayout With {
@@ -564,7 +563,7 @@ Public Class ModernFontDialog
 
         Dim stylePanelW As Single = 200.0F * s
         Dim sizePanelW As Single = 175.0F * s
-        If rightW < stylePanelW + sizePanelW + 120.0F * s Then
+        If rightW < stylePanelW + sizePanelW + buttonW + pad * 2.0F Then
             stylePanelW = Math.Max(150.0F * s, rightW * 0.34F)
             sizePanelW = Math.Max(120.0F * s, rightW * 0.3F)
         End If
@@ -611,6 +610,16 @@ Public Class ModernFontDialog
                                               Math.Max(1.0F, effectsContentX + effectsContentW - layout.UnderlineSwitch.Right - 10.0F * s),
                                               rowH)
 
+        Dim actualButtonW As Single = Math.Max(1.0F, Math.Min(buttonW, effectsContentW))
+        layout.ButtonCancel = New RectangleF(effectsContentX,
+                                             layout.SizeList.Bottom - buttonH,
+                                             actualButtonW,
+                                             buttonH)
+        layout.ButtonOK = New RectangleF(effectsContentX,
+                                         layout.ButtonCancel.Top - buttonGap - buttonH,
+                                         actualButtonW,
+                                         buttonH)
+
         Dim previewX As Single = rightX + pad
         Dim previewW As Single = Math.Max(1.0F, rightW - pad * 2.0F)
         Dim previewTitleH As Single = Math.Max(40.0F * s, CSng(Math.Max(1, D3D_TextInterop.MeasureLineHeight(Font, s, textFormatCache))) + 20.0F * s)
@@ -621,11 +630,6 @@ Public Class ModernFontDialog
             layout.PreviewLines(i) = New RectangleF(previewX, lineY, previewW, previewLineH)
             lineY += previewLineH
         Next
-
-        Dim buttonTop As Single = bottomTop + pad
-        Dim buttonRight As Single = display.Right - pad
-        layout.ButtonCancel = New RectangleF(buttonRight - buttonW, buttonTop, buttonW, buttonH)
-        layout.ButtonOK = New RectangleF(layout.ButtonCancel.Left - buttonGap - buttonW, buttonTop, buttonW, buttonH)
 
         _d2dLayout = layout
         更新文本框渲染区域()
