@@ -64,11 +64,12 @@ Public Class UltraDetailListView
                 value = If(value, "")
                 If String.Equals(_text, value, StringComparison.Ordinal) Then Return
                 _text = value
-                If Owner IsNot Nothing Then Owner.InvalidateItemTextResources()
+                If Owner IsNot Nothing Then Owner.InvalidateItemTextResources(CellOwner)
             End Set
         End Property
 
         Friend Property Owner As UltraDetailListView
+        Friend Property CellOwner As ListSubItem
 
         Private _font As Font = Nothing
         <Description("字体，留空时使用控件默认字体")>
@@ -79,7 +80,7 @@ Public Class UltraDetailListView
             Set(value As Font)
                 If Object.ReferenceEquals(_font, value) Then Return
                 _font = value
-                If Owner IsNot Nothing Then Owner.InvalidateItemFontResources()
+                If Owner IsNot Nothing Then Owner.InvalidateItemFontResources(CellOwner)
             End Set
         End Property
 
@@ -130,7 +131,7 @@ Public Class UltraDetailListView
                 value = If(value, "")
                 If String.Equals(_text, value, StringComparison.Ordinal) Then Return
                 _text = value
-                If Owner IsNot Nothing Then Owner.InvalidateItemTextResources()
+                If Owner IsNot Nothing Then Owner.InvalidateItemTextResources(Me)
             End Set
         End Property
 
@@ -145,7 +146,7 @@ Public Class UltraDetailListView
             Set(value As Font)
                 If Object.ReferenceEquals(_font, value) Then Return
                 _font = value
-                If Owner IsNot Nothing Then Owner.InvalidateItemFontResources()
+                If Owner IsNot Nothing Then Owner.InvalidateItemFontResources(Me)
             End Set
         End Property
 
@@ -532,10 +533,12 @@ Public Class UltraDetailListView
     ''' <summary>所有显示行 (Top + Spacing + Height) = 下一行可用 Y 起点。</summary>
     Private _rowBottoms As Integer() = Array.Empty(Of Integer)()
 
-    Private Sub 重建显示列表()
+    Private Sub 重建显示列表(Optional changedSubItem As ListSubItem = Nothing)
         Dim 需要重验证截断提示 As Boolean = 截断提示当前可见() OrElse 截断提示正在等待显示()
-        取消标签编辑等待()
-        If _editTextBox IsNot Nothing Then 结束标签编辑(True)
+        If changedSubItem IsNot Nothing Then
+            If Object.ReferenceEquals(changedSubItem, _labelEditPendingSubItem) Then 取消标签编辑等待()
+            If Object.ReferenceEquals(changedSubItem, _editSubItem) Then 结束标签编辑(True)
+        End If
 
         ' 记录当前选中的项引用，用于重建后重新映射
         Dim prevSelectedItems As List(Of ListItem) = Nothing
@@ -642,6 +645,7 @@ Public Class UltraDetailListView
         _hoverAnimActive = False
         _hoverRowIndex = -1
         _columnXDirty = True
+        重新映射标签编辑状态()
         If 需要重验证截断提示 Then 重验证活动截断提示()
     End Sub
 
@@ -783,11 +787,12 @@ Public Class UltraDetailListView
     Private ReadOnly _textMeasureCache As New Dictionary(Of TextMeasureKey, Size)(512)
     Private Const MaxTextMeasureCacheEntries As Integer = 4096
 
-    Friend Sub InvalidateItemTextResources()
+    Friend Sub InvalidateItemTextResources(Optional changedSubItem As ListSubItem = Nothing)
+        处理标签编辑单元格刷新(changedSubItem)
         InvalidateMeasureCache()
         全部项高度缓存失效()
         If _updateCount <= 0 Then
-            重建显示列表()
+            重建显示列表(changedSubItem)
             请求V3渲染()
         End If
     End Sub
@@ -846,7 +851,7 @@ Public Class UltraDetailListView
         Dim changed As Boolean = Not Object.ReferenceEquals(subItem.Owner, Me)
         subItem.Owner = Me
         For Each line In subItem.ExtraLines
-            changed = AttachTextLine(line) OrElse changed
+            changed = AttachTextLine(line, subItem) OrElse changed
         Next
         Return changed
     End Function
@@ -855,19 +860,24 @@ Public Class UltraDetailListView
         If subItem Is Nothing Then Return
         If Object.ReferenceEquals(subItem.Owner, Me) Then subItem.Owner = Nothing
         For Each line In subItem.ExtraLines
-            DetachTextLine(line)
+            DetachTextLine(line, subItem)
         Next
     End Sub
 
-    Private Function AttachTextLine(line As TextLine) As Boolean
+    Private Function AttachTextLine(line As TextLine, Optional cellOwner As ListSubItem = Nothing) As Boolean
         If line Is Nothing Then Return False
-        Dim changed As Boolean = Not Object.ReferenceEquals(line.Owner, Me)
+        Dim changed As Boolean = Not Object.ReferenceEquals(line.Owner, Me) OrElse
+                                 Not Object.ReferenceEquals(line.CellOwner, cellOwner)
         line.Owner = Me
+        line.CellOwner = cellOwner
         Return changed
     End Function
 
-    Private Sub DetachTextLine(line As TextLine)
-        If line IsNot Nothing AndAlso Object.ReferenceEquals(line.Owner, Me) Then line.Owner = Nothing
+    Private Sub DetachTextLine(line As TextLine, Optional cellOwner As ListSubItem = Nothing)
+        If line Is Nothing OrElse Not Object.ReferenceEquals(line.Owner, Me) Then Return
+        If cellOwner IsNot Nothing AndAlso Not Object.ReferenceEquals(line.CellOwner, cellOwner) Then Return
+        line.Owner = Nothing
+        line.CellOwner = Nothing
     End Sub
 
     Private Sub InvalidateMeasureCache()
@@ -1973,9 +1983,13 @@ Public Class UltraDetailListView
     ' 标签编辑状态
     Private _labelEditTimer As Timer
     Private _labelEditPendingIndex As Integer = -1
+    Private _labelEditPendingItem As ListItem = Nothing
+    Private _labelEditPendingSubItem As ListSubItem = Nothing
     Private _editTextBox As ModernTextBox = Nothing
     Private _editRowIndex As Integer = -1
     Private _editColumnIndex As Integer = -1
+    Private _editItem As ListItem = Nothing
+    Private _editSubItem As ListSubItem = Nothing
     Private _labelEditPendingColumn As Integer = -1
 
     Private _truncTooltip As FloatingToolTipForm
@@ -2200,12 +2214,13 @@ Public Class UltraDetailListView
         Next
     End Sub
 
-    Friend Sub InvalidateItemFontResources()
+    Friend Sub InvalidateItemFontResources(Optional changedSubItem As ListSubItem = Nothing)
+        处理标签编辑单元格刷新(changedSubItem)
         InvalidateV3TextResources()
         全部项高度缓存失效()
         _columnXDirty = True
         If _updateCount <= 0 Then
-            重建显示列表()
+            重建显示列表(changedSubItem)
             请求V3渲染()
         End If
         请求V3渲染()
@@ -3545,6 +3560,12 @@ Public Class UltraDetailListView
 
 #Region "标签编辑"
 
+    Private Sub 处理标签编辑单元格刷新(changedSubItem As ListSubItem)
+        If changedSubItem Is Nothing Then Return
+        If Object.ReferenceEquals(changedSubItem, _labelEditPendingSubItem) Then 取消标签编辑等待()
+        If Object.ReferenceEquals(changedSubItem, _editSubItem) Then 结束标签编辑(True)
+    End Sub
+
     Private NotInheritable Class LabelEditTextBox
         Inherits ModernTextBox
 
@@ -3595,8 +3616,13 @@ Public Class UltraDetailListView
     Private Sub 开始标签编辑等待(displayRowIndex As Integer, columnIndex As Integer)
         取消标签编辑等待()
         隐藏截断提示()
+        If displayRowIndex < 0 OrElse displayRowIndex >= _displayRows.Count OrElse Not 列可编辑(columnIndex) Then Return
+        Dim row = _displayRows(displayRowIndex)
+        If row.Type <> DisplayRowType.Item OrElse columnIndex >= row.Item.SubItems.Count Then Return
         _labelEditPendingIndex = displayRowIndex
         _labelEditPendingColumn = columnIndex
+        _labelEditPendingItem = row.Item
+        _labelEditPendingSubItem = row.Item.SubItems(columnIndex)
         If _labelEditTimer Is Nothing Then
             _labelEditTimer = New Timer()
             AddHandler _labelEditTimer.Tick, AddressOf 标签编辑计时器触发
@@ -3608,6 +3634,8 @@ Public Class UltraDetailListView
     Private Sub 取消标签编辑等待()
         _labelEditPendingIndex = -1
         _labelEditPendingColumn = -1
+        _labelEditPendingItem = Nothing
+        _labelEditPendingSubItem = Nothing
         _labelEditTimer?.Stop()
     End Sub
 
@@ -3615,9 +3643,16 @@ Public Class UltraDetailListView
         _labelEditTimer.Stop()
         Dim idx = _labelEditPendingIndex
         Dim col = _labelEditPendingColumn
-        _labelEditPendingIndex = -1
-        _labelEditPendingColumn = -1
-        If idx >= 0 AndAlso col >= 0 Then 开始标签编辑(idx, col)
+        Dim pendingItem = _labelEditPendingItem
+        Dim pendingSubItem = _labelEditPendingSubItem
+        取消标签编辑等待()
+        If pendingItem IsNot Nothing AndAlso pendingSubItem IsNot Nothing AndAlso
+           idx >= 0 AndAlso col >= 0 AndAlso idx < _displayRows.Count AndAlso
+           Object.ReferenceEquals(_displayRows(idx).Item, pendingItem) AndAlso
+           col < pendingItem.SubItems.Count AndAlso
+           Object.ReferenceEquals(pendingItem.SubItems(col), pendingSubItem) Then
+            开始标签编辑(idx, col)
+        End If
     End Sub
 
     ''' <summary>开始编辑指定行指定列的子项主文本。</summary>
@@ -3631,38 +3666,16 @@ Public Class UltraDetailListView
         Dim item = row.Item
         If columnIndex >= item.SubItems.Count Then Return
 
-        Dim rowY = 获取行Y坐标(displayRowIndex)
-        If rowY < 0 Then Return
-
-        确保列X缓存()
-        Dim colX = _columnXCache(Math.Min(columnIndex, _columnXCount - 1))
-        Dim colW = _columns(columnIndex).Width
-        Dim iconAreaW = If(columnIndex = 0, 获取图标区域宽度(item), 0)
-        Dim scaledPadding As Padding = Dpi(项内边距)
-        Dim cellX = colX + scaledPadding.Left + iconAreaW
-        Dim cellW = colW - scaledPadding.Horizontal - iconAreaW
-        If cellW <= 20 Then Return
-
-        ' 编辑框只覆盖主文本区域。BottomLines 属于同一行的独立底部区域，
-        ' 必须从高度和背景快照中排除，否则底部文本会压到编辑框上。
-        Dim bottomLinesH As Integer = item.CachedBottomLinesHeight
-        Dim upperPartH As Integer = item.CachedUpperPartHeight
-        If bottomLinesH = 0 AndAlso upperPartH = 0 Then
-            Dim rowFullW As Integer = If(_columns.Count > 0, 获取总列宽(), 获取内容区域().Width)
-            bottomLinesH = 计算底部文本行高度(item, rowFullW)
-            upperPartH = row.Height - scaledPadding.Vertical - bottomLinesH
-        End If
-        upperPartH = Math.Max(1, upperPartH)
-        Dim editY As Integer = rowY + scaledPadding.Top
-        If editY + upperPartH > rowY + row.Height - scaledPadding.Bottom Then
-            upperPartH = Math.Max(1, rowY + row.Height - scaledPadding.Bottom - editY)
-        End If
+        Dim editBounds As Rectangle = Rectangle.Empty
+        Dim editPadding As Padding = Padding.Empty
+        If Not 尝试获取编辑单元格布局(displayRowIndex, columnIndex, item, editBounds, editPadding) Then Return
 
         _editRowIndex = displayRowIndex
         _editColumnIndex = columnIndex
         Dim sub_ = item.SubItems(columnIndex)
-        Dim editDirtyRect As New Rectangle(cellX, editY, cellW, upperPartH)
-        Dim editBackground As Image = 创建编辑框背景快照(editDirtyRect)
+        _editItem = item
+        _editSubItem = sub_
+        Dim editBackground As Image = 创建编辑框背景快照(editBounds)
         Dim fallbackBackColor As Color = 获取编辑框回退背景颜色(displayRowIndex)
 
         _editTextBox = New LabelEditTextBox With {
@@ -3675,13 +3688,15 @@ Public Class UltraDetailListView
             .BorderSize = 1,
             .BorderColor = 项高亮边框颜色,
             .BorderColorFocus = 项高亮边框颜色,
-            .Padding = New Padding(2, 0, 2, 0),
-            .Location = New Point(cellX, editY),
-            .Size = New Size(cellW, upperPartH)
+            .BorderRadius = 0,
+            .MultiLine = False,
+            .TextAlign = ModernTextBox.TextAlignMode.Left,
+            .Padding = editPadding,
+            .Bounds = editBounds
         }
 
         ' 让 list view 的背景/文本缓存失效，避免编辑框采样时拍到旧文字。
-        请求V3渲染(editDirtyRect)
+        请求V3渲染(editBounds)
 
         Me.Controls.Add(_editTextBox)
         _editTextBox.BringToFront()
@@ -3693,6 +3708,98 @@ Public Class UltraDetailListView
         _editTextBox.Focus()
         _editTextBox.SelectAll()
     End Sub
+
+    Private Function 尝试获取编辑单元格布局(displayRowIndex As Integer, columnIndex As Integer, item As ListItem,
+                                         ByRef bounds As Rectangle, ByRef textPadding As Padding) As Boolean
+        bounds = Rectangle.Empty
+        textPadding = Padding.Empty
+        If item Is Nothing OrElse displayRowIndex < 0 OrElse displayRowIndex >= _displayRows.Count OrElse
+           columnIndex < 0 OrElse columnIndex >= _columns.Count Then Return False
+
+        Dim rowY As Integer = 获取行Y坐标(displayRowIndex)
+        If rowY < 0 Then Return False
+        确保列X缓存()
+
+        Dim row = _displayRows(displayRowIndex)
+        Dim bottomLinesH As Integer = item.CachedBottomLinesHeight
+        If item.CachedHeight < 0 Then
+            row.Height = 计算项高度(item)
+            bottomLinesH = item.CachedBottomLinesHeight
+        End If
+
+        ' 编辑器覆盖完整的主单元格；BottomLines 是跨列的独立区域，不属于该单元格。
+        Dim cellHeight As Integer = row.Height
+        If bottomLinesH > 0 Then cellHeight -= bottomLinesH + Dpi(项内边距).Bottom
+        Dim rawBounds As New Rectangle(_columnXCache(columnIndex), rowY,
+                                       _columns(columnIndex).Width, Math.Max(1, cellHeight))
+        Dim contentRect = 获取内容区域()
+        contentRect.Width = Math.Max(0, contentRect.Width - 获取垂直滚动条占位宽度())
+        bounds = Rectangle.Intersect(rawBounds, contentRect)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return False
+
+        Dim scaledPadding As Padding = Dpi(项内边距)
+        Dim textLeft As Integer = rawBounds.Left + scaledPadding.Left
+        If columnIndex = 0 Then textLeft += 获取图标区域宽度(item)
+        Dim textRight As Integer = rawBounds.Right - scaledPadding.Right
+        Dim scale As Single = Math.Max(0.01F, DpiScale())
+        textPadding = New Padding(
+            Math.Max(0, CInt(Math.Round((textLeft - bounds.Left) / scale))),
+            0,
+            Math.Max(0, CInt(Math.Round((bounds.Right - textRight) / scale))),
+            0)
+        Return True
+    End Function
+
+    Private Sub 重新映射标签编辑状态()
+        If _labelEditPendingItem IsNot Nothing Then
+            Dim pendingRow = 查找显示行索引(_labelEditPendingItem)
+            If pendingRow < 0 OrElse Not 列仍指向子项(_labelEditPendingItem, _labelEditPendingSubItem, _labelEditPendingColumn) Then
+                取消标签编辑等待()
+            Else
+                _labelEditPendingIndex = pendingRow
+            End If
+        End If
+
+        If _editTextBox Is Nothing Then Return
+        Dim editRow = 查找显示行索引(_editItem)
+        If editRow < 0 OrElse Not 列仍指向子项(_editItem, _editSubItem, _editColumnIndex) Then
+            结束标签编辑(True)
+            Return
+        End If
+
+        Dim editBounds As Rectangle = Rectangle.Empty
+        Dim editPadding As Padding = Padding.Empty
+        If Not 尝试获取编辑单元格布局(editRow, _editColumnIndex, _editItem, editBounds, editPadding) Then
+            结束标签编辑(True)
+            Return
+        End If
+
+        _editRowIndex = editRow
+        _editTextBox.Bounds = editBounds
+        _editTextBox.Padding = editPadding
+        _editTextBox.Font = If(_editSubItem.Font, Me.Font)
+        _editTextBox.ForeColor = If(_editSubItem.ForeColor <> Color.Empty, _editSubItem.ForeColor, 项文本颜色)
+        Dim editBox = TryCast(_editTextBox, LabelEditTextBox)
+        If editBox Is Nothing Then
+            结束标签编辑(True)
+            Return
+        End If
+        editBox.FrozenBackground = 创建编辑框背景快照(editBounds)
+        _editTextBox.BringToFront()
+    End Sub
+
+    Private Function 查找显示行索引(item As ListItem) As Integer
+        If item Is Nothing Then Return -1
+        For i As Integer = 0 To _displayRows.Count - 1
+            If _displayRows(i).Type = DisplayRowType.Item AndAlso Object.ReferenceEquals(_displayRows(i).Item, item) Then Return i
+        Next
+        Return -1
+    End Function
+
+    Private Function 列仍指向子项(item As ListItem, subItem As ListSubItem, columnIndex As Integer) As Boolean
+        Return item IsNot Nothing AndAlso subItem IsNot Nothing AndAlso 列可编辑(columnIndex) AndAlso
+               columnIndex < item.SubItems.Count AndAlso Object.ReferenceEquals(item.SubItems(columnIndex), subItem)
+    End Function
 
     Private Function 创建编辑框背景快照(cellRect As Rectangle) As Image
         If cellRect.Width <= 0 OrElse cellRect.Height <= 0 Then Return Nothing
@@ -3805,33 +3912,38 @@ Public Class UltraDetailListView
     Private Sub 结束标签编辑(cancel As Boolean)
         If _editTextBox Is Nothing Then Return
         Dim editBox = _editTextBox
+        Dim editItem = _editItem
+        Dim editSubItem = _editSubItem
+        Dim editRowIndex = _editRowIndex
+        Dim editColumnIndex = _editColumnIndex
+        Dim newText = editBox.Text
+        Dim shouldRefocus = editBox.ContainsFocus
+
         _editTextBox = Nothing
+        _editItem = Nothing
+        _editSubItem = Nothing
+        _editRowIndex = -1
+        _editColumnIndex = -1
 
         RemoveHandler editBox.PreviewKeyDown, AddressOf 编辑框预览按键
         RemoveHandler editBox.LostFocus, AddressOf 编辑框失焦
         RemoveHandler editBox.KeyDown, AddressOf 编辑框按键
+        Me.Controls.Remove(editBox)
+        editBox.Dispose()
 
-        Dim shouldRefocus = editBox.Focused
-
-        If Not cancel AndAlso _editRowIndex >= 0 AndAlso _editRowIndex < _displayRows.Count AndAlso _editColumnIndex >= 0 Then
-            Dim row = _displayRows(_editRowIndex)
-            If row.Type = DisplayRowType.Item AndAlso _editColumnIndex < row.Item.SubItems.Count Then
-                Dim oldText = row.Item.SubItems(_editColumnIndex).Text
-                Dim newText = editBox.Text
-                Dim args As New LabelEditEventArgs(row.Item, _editRowIndex, _editColumnIndex, oldText, newText)
-                RaiseEvent AfterLabelEdit(Me, args)
-                If Not args.CancelEdit Then
-                    row.Item.SubItems(_editColumnIndex).Text = args.Label
-                End If
+        If Not cancel AndAlso editItem IsNot Nothing AndAlso editSubItem IsNot Nothing Then
+            Dim oldText = editSubItem.Text
+            Dim args As New LabelEditEventArgs(editItem, editRowIndex, editColumnIndex, oldText, newText)
+            RaiseEvent AfterLabelEdit(Me, args)
+            If Not args.CancelEdit AndAlso _items.Contains(editItem) AndAlso
+               editColumnIndex >= 0 AndAlso editColumnIndex < editItem.SubItems.Count AndAlso
+               Object.ReferenceEquals(editItem.SubItems(editColumnIndex), editSubItem) Then
+                editSubItem.Text = args.Label
             End If
         End If
 
-        _editRowIndex = -1
-        _editColumnIndex = -1
-        Me.Controls.Remove(editBox)
-        editBox.Dispose()
         请求V3渲染()
-        If shouldRefocus Then Me.Focus()
+        If shouldRefocus AndAlso _editTextBox Is Nothing Then Me.Focus()
     End Sub
 
 #End Region
@@ -4482,6 +4594,10 @@ Public Class UltraDetailListView
             _editTextBox.Dispose()
             _editTextBox = Nothing
         End If
+        _editItem = Nothing
+        _editSubItem = Nothing
+        _editRowIndex = -1
+        _editColumnIndex = -1
         If _labelEditTimer IsNot Nothing Then
             RemoveHandler _labelEditTimer.Tick, AddressOf 标签编辑计时器触发
             _labelEditTimer.Dispose()
