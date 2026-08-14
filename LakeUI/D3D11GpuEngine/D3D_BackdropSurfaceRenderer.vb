@@ -94,6 +94,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     ' 当宿主长期保持 WDA_NONE（允许系统截图截到本窗口）时，
     ' 必须在 BitBlt 桌面 DC 的瞬间临时排除自身，否则会抓到镜像反馈。
     Private _transientExcludeOnCapture As Integer = 0
+    Private ReadOnly _transientExcludeLock As New Object()
+    Private _additionalTransientExcludeHandle As IntPtr = IntPtr.Zero
 
     ' ── 参数（运行时可被 UI 线程修改，工作线程读取）──
     Private _radius As Integer = 24
@@ -327,8 +329,12 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     ''' 配置 Auto 抓屏期间是否临时启用 WDA_EXCLUDEFROMCAPTURE。
     ''' 当宿主长期 WDA_NONE 但又使用 Auto 抓屏时必须开启，否则 BitBlt 会抓到自身产生反馈纹路。
     ''' </summary>
-    Public Sub SetTransientExcludeOnCapture(value As Boolean)
-        Volatile.Write(_transientExcludeOnCapture, If(value, 1, 0))
+    Public Sub SetTransientExcludeOnCapture(value As Boolean,
+                                            Optional additionalWindowHandle As IntPtr = Nothing)
+        SyncLock _transientExcludeLock
+            Volatile.Write(_transientExcludeOnCapture, If(value, 1, 0))
+            _additionalTransientExcludeHandle = additionalWindowHandle
+        End SyncLock
     End Sub
 
     Private Sub InvalidateDerivedFrameCaches()
@@ -673,11 +679,22 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 ' 若宿主长期 WDA_NONE（允许系统截图截到本窗口），必须在 BitBlt 瞬间
                 ' 临时启用 WDA_EXCLUDEFROMCAPTURE，否则桌面 DC 会包含本窗口自身。
                 ' 注意：必须使用构造时缓存的 _hostHandle，绝不能在后台线程访问 _host.Handle。
-                Dim needTransientExclude As Boolean = (Volatile.Read(_transientExcludeOnCapture) <> 0)
+                Dim needTransientExclude As Boolean
+                Dim additionalExcludeHandle As IntPtr
+                SyncLock _transientExcludeLock
+                    needTransientExclude = (Volatile.Read(_transientExcludeOnCapture) <> 0)
+                    additionalExcludeHandle = _additionalTransientExcludeHandle
+                End SyncLock
                 Dim hostHandle As IntPtr = _hostHandle
                 Dim transientApplied As Boolean = False
+                Dim additionalTransientApplied As Boolean = False
                 If needTransientExclude AndAlso hostHandle <> IntPtr.Zero Then
                     transientApplied = SetWindowDisplayAffinity(hostHandle, WDA_EXCLUDEFROMCAPTURE)
+                End If
+                If needTransientExclude AndAlso
+                   additionalExcludeHandle <> IntPtr.Zero AndAlso
+                   additionalExcludeHandle <> hostHandle Then
+                    additionalTransientApplied = SetWindowDisplayAffinity(additionalExcludeHandle, WDA_EXCLUDEFROMCAPTURE)
                 End If
                 Try
                     Using gCap As Graphics = Graphics.FromImage(captured)
@@ -704,6 +721,9 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                     Return
                 Finally
                     ' 立即恢复原状（WDA_NONE）。若设置失败也尝试恢复，避免出现意外残留。
+                    If additionalTransientApplied Then
+                        SetWindowDisplayAffinity(additionalExcludeHandle, WDA_NONE)
+                    End If
                     If transientApplied Then
                         SetWindowDisplayAffinity(hostHandle, WDA_NONE)
                     End If

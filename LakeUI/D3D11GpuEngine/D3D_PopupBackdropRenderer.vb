@@ -33,6 +33,7 @@ Friend NotInheritable Class D3D_PopupBackdropRenderer
     Public Property NoiseOpacity As Byte = 18
     Public Property NoiseScale As Single = 1.0F
     Public Property TransientExcludeOnCapture As Boolean = False
+    Public Property AdditionalTransientExcludeHandle As IntPtr = IntPtr.Zero
 
     Public Sub New(host As Form)
         _host = host
@@ -72,7 +73,8 @@ Friend NotInheritable Class D3D_PopupBackdropRenderer
         _renderer.ApplyParameters(BlurRadius, BlurPasses, DownsampleFactor,
                                   NoiseScale)
         _renderer.SetSource(Mode = PopupBackdropMode.Image, SourceImage)
-        _renderer.SetTransientExcludeOnCapture(TransientExcludeOnCapture)
+        _renderer.SetTransientExcludeOnCapture(TransientExcludeOnCapture,
+                                                AdditionalTransientExcludeHandle)
         _renderer.RequestFrame(formBounds, commitAverage)
     End Sub
 

@@ -513,7 +513,7 @@ Public Class HtmlColorLabel
             Case TextAlignEnum.MiddleRight : ta = Vortice.DirectWrite.TextAlignment.Trailing : pa = Vortice.DirectWrite.ParagraphAlignment.Center
             Case Else : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Near
         End Select
-        context.DrawText(text, Me.Font, 文本颜色, 内容区域, ta, pa)
+        context.DrawText(text, Me.Font, 文本颜色, 内容区域, ta, pa, wordWrap:=True)
     End Sub
 
     Private Sub 绘制单元_GPU(context As D3D_PaintContext, text As String, font As Font, color As Color,

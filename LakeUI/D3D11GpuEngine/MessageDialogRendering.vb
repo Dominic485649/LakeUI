@@ -54,12 +54,17 @@ Friend NotInheritable Class MessageDialogBackdropController
     End Property
 
     Public Sub Prepare()
-        Prepare(_host.Bounds)
+        Prepare(_host.Bounds, IntPtr.Zero)
     End Sub
 
     Public Sub Prepare(captureBounds As Rectangle)
+        Prepare(captureBounds, IntPtr.Zero)
+    End Sub
+
+    Public Sub Prepare(captureBounds As Rectangle, additionalExcludeHandle As IntPtr)
         If _backdrop Is Nothing Then _backdrop = New D3D_PopupBackdropRenderer(_host)
         _backdrop.TransientExcludeOnCapture = True
+        _backdrop.AdditionalTransientExcludeHandle = additionalExcludeHandle
 
         If Enabled Then
             _backdrop.Configure(MessageDialogOptions.BackdropMode,

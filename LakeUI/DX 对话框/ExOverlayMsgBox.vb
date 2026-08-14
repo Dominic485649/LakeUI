@@ -255,6 +255,13 @@ Public Module ExOverlayMsgBoxModule
                 card.Show(overlay)
                 card.Activate()
             End Sub
+        AddHandler overlay.BackgroundClicked,
+            Sub()
+                If card.IsDisposed OrElse Not card.IsHandleCreated Then Return
+                card.BeginInvoke(CType(Sub()
+                                           If Not card.IsDisposed Then card.Activate()
+                                       End Sub, MethodInvoker))
+            End Sub
         AddHandler card.FormClosed,
             Sub()
                 cardClosed = True
@@ -360,6 +367,8 @@ Friend Class ExOverlayBackdropForm
 
     ''' <summary>遮罩范围发生变化时触发（Owner 窗口移动或调整大小）。</summary>
     Public Event BoundsUpdated As EventHandler
+    ''' <summary>用户点击遮罩空白区域时触发。</summary>
+    Public Event BackgroundClicked As EventHandler
 
     Public Sub New(bounds As Rectangle, theme As ExOverlayMsgBoxTheme, topMost As Boolean, owner As Control)
         Me.FormBorderStyle = FormBorderStyle.None
@@ -396,7 +405,9 @@ Friend Class ExOverlayBackdropForm
             End If
         End If
 
-        Me.Bounds = 跟踪目标.RectangleToScreen(跟踪目标.ClientRectangle)
+        Dim 新范围 = 跟踪目标.RectangleToScreen(跟踪目标.ClientRectangle)
+        If Me.Bounds = 新范围 Then Return
+        Me.Bounds = 新范围
         RaiseEvent BoundsUpdated(Me, EventArgs.Empty)
     End Sub
 
@@ -465,7 +476,10 @@ Friend Class ExOverlayBackdropForm
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
-        If e.Button = MouseButtons.Left Then 开始拖拽Owner()
+        If e.Button = MouseButtons.Left Then
+            开始拖拽Owner()
+            RaiseEvent BackgroundClicked(Me, EventArgs.Empty)
+        End If
     End Sub
 
     Private Sub 开始拖拽Owner()
@@ -476,7 +490,6 @@ Friend Class ExOverlayBackdropForm
         SendMessage(hWnd, WM_NCLBUTTONDOWN, New IntPtr(HT_CAPTION), IntPtr.Zero)
         EnableWindow(hWnd, False)
         目标位置变化(Me, EventArgs.Empty)
-        Activate()
     End Sub
 
     Friend Sub 执行排除捕获(action As Action)
@@ -1586,7 +1599,13 @@ Friend Class ExOverlayMsgBoxForm
     End Sub
 
     Public Sub 准备毛玻璃()
-        毛玻璃?.Prepare()
+        Dim 额外排除句柄 As IntPtr = IntPtr.Zero
+        If 遮罩窗体 IsNot Nothing AndAlso
+           遮罩窗体.Visible AndAlso
+           遮罩窗体.IsHandleCreated Then
+            额外排除句柄 = 遮罩窗体.Handle
+        End If
+        毛玻璃?.Prepare(Me.Bounds, 额外排除句柄)
         RequestV3Render()
     End Sub
 
