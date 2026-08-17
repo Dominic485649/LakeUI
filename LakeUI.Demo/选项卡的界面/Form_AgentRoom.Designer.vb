@@ -51,7 +51,6 @@ Partial Class Form_AgentRoom
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
-        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(731, 585)
         ModernPanel1.TabIndex = 38
         ' 
@@ -66,12 +65,14 @@ Partial Class Form_AgentRoom
         AgentRoom1.CardForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         AgentRoom1.Dock = DockStyle.Fill
         AgentRoom1.Location = New Point(20, 170)
+        AgentRoom1.MarkdownBasePath = Nothing
         AgentRoom1.Name = "AgentRoom1"
         AgentRoom1.Padding = New Padding(20)
         AgentRoom1.ScrollBarWidth = 8
         AgentRoom1.Size = New Size(691, 395)
         AgentRoom1.TabIndex = 39
         AgentRoom1.Text = "AgentRoom1"
+        AgentRoom1.ToolCallForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ' 
         ' Label6
         ' 
@@ -216,7 +217,6 @@ Partial Class Form_AgentRoom
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 0, 13, 0)
-        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernTextBox1.Size = New Size(671, 82)
         ModernTextBox1.TabIndex = 40
         ModernTextBox1.TabStop = False

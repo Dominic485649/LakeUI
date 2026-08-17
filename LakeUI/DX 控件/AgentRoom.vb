@@ -5,8 +5,8 @@ Imports System.Text.RegularExpressions
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' AI 聊天室控件：仅保留消息显示区，支持气泡消息与卡片消息、文字选取/复制、链接点击。
-''' 数据通过 Items 集合或 AddXxx/Clear 方法操作；不内置输入框、按钮、线程切换。
+''' 单会话 Agent 消息控件：支持用户消息、无气泡助手正文、可折叠轮次过程和工具调用。
+''' 数据通过 Items 集合或 AddXxx/Clear 方法操作；不内置会话管理、输入框、按钮或线程切换。
 ''' </summary>
 <DefaultEvent("LinkClicked")>
 Public Class AgentRoom
@@ -18,6 +18,9 @@ Public Class AgentRoom
         UserMessage = 0
         AssistantMessage = 1
         Card = 2
+        TurnHeader = 3
+        AssistantActivity = 4
+        ToolCall = 5
     End Enum
 
     Public Enum BubbleWidthMode
@@ -36,6 +39,17 @@ Public Class AgentRoom
         Friend ReadOnly LineRanges As New List(Of LineRange)
         Friend ReadOnly LinkSpans As New List(Of LinkSpan)
         Friend BubbleRect As Rectangle
+        Friend HeaderRect As Rectangle
+        Friend DetailViewportRect As Rectangle
+        Friend FooterRect As Rectangle
+        Friend HeaderCopyButtonRect As Rectangle
+        Friend HeaderToggleButtonRect As Rectangle
+        Friend FooterCopyButtonRect As Rectangle
+        Friend FooterToggleButtonRect As Rectangle
+        Friend ReadOnly DetailScrollBar As New V3_ScrollBarRenderer()
+        Friend DetailContentHeight As Integer
+        Friend DetailScrollOffset As Integer
+        Friend DetailScrollBarVisible As Boolean
         Friend TextOriginX As Integer
         Friend TextOriginY As Integer
         Friend MarkdownRenderer As MarkdownViewerCore
@@ -48,6 +62,13 @@ Public Class AgentRoom
 
         Private _kind As ChatItemKind = ChatItemKind.AssistantMessage
         Private _text As String = ""
+        Private _key As String = ""
+        Private _title As String = ""
+        Private _parentTurnId As String = ""
+        Private _isExpanded As Boolean
+        Private _isVisible As Boolean = True
+        Private _isRunning As Boolean
+        Private _isError As Boolean
         Private _textBuilder As System.Text.StringBuilder = Nothing
         Private _textSnapshotDirty As Boolean = False
         Private _pendingMarkdownRendererAppend As System.Text.StringBuilder = Nothing
@@ -80,6 +101,114 @@ Public Class AgentRoom
                 End If
             End Set
         End Property
+
+        <Category("LakeUI"), Description("供宿主定位条目的稳定标识"), DefaultValue("")>
+        Public Property Key As String
+            Get
+                Return _key
+            End Get
+            Set(value As String)
+                _key = If(value, "")
+            End Set
+        End Property
+
+        <Category("LakeUI"), Description("折叠行显示的标题"), DefaultValue("")>
+        Public Property Title As String
+            Get
+                Return _title
+            End Get
+            Set(value As String)
+                Dim normalized = If(value, "")
+                If _title = normalized Then Return
+                _title = normalized
+                NeedsRelayout = True
+                OwnerRoom?.NotifyItemChanged(Me)
+            End Set
+        End Property
+
+        <Category("LakeUI"), Description("所属轮次标识；为空表示不受轮次折叠影响"), DefaultValue("")>
+        Public Property ParentTurnId As String
+            Get
+                Return _parentTurnId
+            End Get
+            Set(value As String)
+                Dim normalized = If(value, "")
+                If _parentTurnId = normalized Then Return
+                _parentTurnId = normalized
+                OwnerRoom?.SynchronizeItemVisibility(Me)
+            End Set
+        End Property
+
+        <Category("LakeUI"), Description("轮次或工具详情是否展开"), DefaultValue(False)>
+        Public Property IsExpanded As Boolean
+            Get
+                Return _isExpanded
+            End Get
+            Set(value As Boolean)
+                If _isExpanded = value Then Return
+                _isExpanded = value
+                NeedsRelayout = True
+                OwnerRoom?.OnItemExpansionChanged(Me)
+            End Set
+        End Property
+
+        <Category("LakeUI"), Description("条目是否处于运行状态"), DefaultValue(False)>
+        Public Property IsRunning As Boolean
+            Get
+                Return _isRunning
+            End Get
+            Set(value As Boolean)
+                If _isRunning = value Then Return
+                _isRunning = value
+                OwnerRoom?.NotifyItemChanged(Me)
+            End Set
+        End Property
+
+        <Category("LakeUI"), Description("条目是否表示错误"), DefaultValue(False)>
+        Public Property IsError As Boolean
+            Get
+                Return _isError
+            End Get
+            Set(value As Boolean)
+                If _isError = value Then Return
+                _isError = value
+                OwnerRoom?.NotifyItemChanged(Me)
+            End Set
+        End Property
+
+        <Browsable(False)>
+        Public ReadOnly Property IsVisible As Boolean
+            Get
+                Return _isVisible
+            End Get
+        End Property
+
+        <Browsable(False)>
+        Public ReadOnly Property IsToolDetailScrollable As Boolean
+            Get
+                Return _kind = ChatItemKind.ToolCall AndAlso DetailScrollBarVisible
+            End Get
+        End Property
+
+        <Browsable(False)>
+        Public ReadOnly Property ToolDetailScrollOffset As Integer
+            Get
+                Return DetailScrollOffset
+            End Get
+        End Property
+
+        <Browsable(False)>
+        Public ReadOnly Property ToolDetailViewportHeight As Integer
+            Get
+                Return DetailViewportRect.Height
+            End Get
+        End Property
+
+        Friend Sub SetVisibleInternal(value As Boolean)
+            If _isVisible = value Then Return
+            _isVisible = value
+            NeedsRelayout = True
+        End Sub
 
         <Category("LakeUI"), Description("文本内容"), DefaultValue("")>
         <Editor("System.ComponentModel.Design.MultilineStringEditor, System.Design", GetType(System.Drawing.Design.UITypeEditor))>
@@ -340,6 +469,24 @@ Public Class AgentRoom
         End Property
     End Structure
 
+    Private Enum ToolActionKind
+        None = 0
+        Copy = 1
+        Toggle = 2
+    End Enum
+
+    Private Structure ToolActionHitInfo
+        Public Item As ChatItem
+        Public Action As ToolActionKind
+        Public IsFooter As Boolean
+
+        Public ReadOnly Property HasValue As Boolean
+            Get
+                Return Item IsNot Nothing AndAlso Action <> ToolActionKind.None
+            End Get
+        End Property
+    End Structure
+
     Private Structure LinkHitInfo
         Public Url As String
         Public ItemIndex As Integer
@@ -360,6 +507,10 @@ Public Class AgentRoom
     Friend _activeMarkdownItemIndex As Integer = -1
     Friend _mouseDownLinkUrl As String = Nothing
     Friend _mouseDownLinkItemIndex As Integer = -1
+    Private _activeToolScrollItem As ChatItem = Nothing
+    Private _hoverToolScrollItem As ChatItem = Nothing
+    Private _hoverToolCopyItem As ChatItem = Nothing
+    Private _hoverToolCopyIsFooter As Boolean
 
     Friend _enableMarkdownForAssistant As Boolean = True
     Private _markdownParser As MarkdownViewerCore.MarkdownParser = Nothing
@@ -1456,6 +1607,210 @@ Public Class AgentRoom
         End Get
     End Property
 
+    Friend _assistantPadding As New Padding(0, 4, 0, 4)
+    <Category("LakeUI - Agent"), Description("无气泡助手正文内边距"), DefaultValue(GetType(Padding), "0, 4, 0, 4")>
+    Public Property AssistantPadding As Padding
+        Get
+            Return _assistantPadding
+        End Get
+        Set(value As Padding)
+            If _assistantPadding = value Then Return
+            _assistantPadding = value
+            InvalidateAllItemsLayout()
+            RequestV3Render()
+        End Set
+    End Property
+
+    Friend _activityHorizontalMargin As Integer = 20
+    <Category("LakeUI - Agent"), Description("轮次过程内容两侧的额外边距（逻辑像素，会自动适配 DPI）"), DefaultValue(20)>
+    Public Property ActivityHorizontalMargin As Integer
+        Get
+            Return _activityHorizontalMargin
+        End Get
+        Set(value As Integer)
+            SetValue(_activityHorizontalMargin, Math.Max(0, value))
+        End Set
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden), EditorBrowsable(EditorBrowsableState.Never), Obsolete("请使用 ActivityHorizontalMargin。")>
+    Public Property ActivityIndent As Integer
+        Get
+            Return ActivityHorizontalMargin
+        End Get
+        Set(value As Integer)
+            ActivityHorizontalMargin = value
+        End Set
+    End Property
+
+    Friend _turnHeaderHeight As Integer = 30
+    <Category("LakeUI - Agent"), Description("轮次折叠标题高度"), DefaultValue(30)>
+    Public Property TurnHeaderHeight As Integer
+        Get
+            Return _turnHeaderHeight
+        End Get
+        Set(value As Integer)
+            SetValue(_turnHeaderHeight, Math.Max(22, value))
+        End Set
+    End Property
+
+    Friend _toolHeaderHeight As Integer = 34
+    <Category("LakeUI - Agent"), Description("工具调用折叠标题高度"), DefaultValue(34)>
+    Public Property ToolHeaderHeight As Integer
+        Get
+            Return _toolHeaderHeight
+        End Get
+        Set(value As Integer)
+            SetValue(_toolHeaderHeight, Math.Max(24, value))
+        End Set
+    End Property
+
+    Friend _toolCallExpandedMaxHeight As Integer = 500
+    <Category("LakeUI - Agent"), Description("工具调用展开后的最大总高度；0 表示不限制（逻辑像素，会自动适配 DPI）"), DefaultValue(500)>
+    Public Property ToolCallExpandedMaxHeight As Integer
+        Get
+            Return _toolCallExpandedMaxHeight
+        End Get
+        Set(value As Integer)
+            SetValue(_toolCallExpandedMaxHeight, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _toolCallCopyText As String = "Copy"
+    <Category("LakeUI - Agent"), Description("工具调用复制按钮显示的文本"), DefaultValue("Copy")>
+    Public Property ToolCallCopyText As String
+        Get
+            Return _toolCallCopyText
+        End Get
+        Set(value As String)
+            SetValue(_toolCallCopyText, If(value, ""))
+        End Set
+    End Property
+
+    Friend _toolCallCopyHoverBackColor As Color = Color.FromArgb(40, 255, 255, 255)
+    <Category("LakeUI - Agent"), Description("工具调用复制按钮的鼠标悬停填充色"), DefaultValue(GetType(Color), "40, 255, 255, 255")>
+    Public Property ToolCallCopyHoverBackColor As Color
+        Get
+            Return _toolCallCopyHoverBackColor
+        End Get
+        Set(value As Color)
+            SetValue(_toolCallCopyHoverBackColor, value)
+        End Set
+    End Property
+
+    Friend _toolCallCopyCornerRadius As Integer = 4
+    <Category("LakeUI - Agent"), Description("工具调用复制按钮悬停背景的圆角半径（逻辑像素，会自动适配 DPI）"), DefaultValue(4)>
+    Public Property ToolCallCopyCornerRadius As Integer
+        Get
+            Return _toolCallCopyCornerRadius
+        End Get
+        Set(value As Integer)
+            SetValue(_toolCallCopyCornerRadius, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _toolCallCopyPadding As New Padding(8, 4, 8, 4)
+    <Category("LakeUI - Agent"), Description("工具调用复制按钮文本的内部留白（逻辑像素，会自动适配 DPI）"), DefaultValue(GetType(Padding), "8, 4, 8, 4")>
+    Public Property ToolCallCopyPadding As Padding
+        Get
+            Return _toolCallCopyPadding
+        End Get
+        Set(value As Padding)
+            Dim normalized As New Padding(Math.Max(0, value.Left),
+                                          Math.Max(0, value.Top),
+                                          Math.Max(0, value.Right),
+                                          Math.Max(0, value.Bottom))
+            SetValue(_toolCallCopyPadding, normalized)
+        End Set
+    End Property
+
+    Friend _turnHeaderForeColor As Color = Color.FromArgb(170, 190, 190, 190)
+    <Category("LakeUI - Agent"), Description("轮次折叠标题颜色"), DefaultValue(GetType(Color), "170, 190, 190, 190")>
+    Public Property TurnHeaderForeColor As Color
+        Get
+            Return _turnHeaderForeColor
+        End Get
+        Set(value As Color)
+            SetValue(_turnHeaderForeColor, value)
+        End Set
+    End Property
+
+    Friend _activityForeColor As Color = Color.FromArgb(205, 205, 205)
+    <Category("LakeUI - Agent"), Description("轮次过程段落颜色"), DefaultValue(GetType(Color), "205, 205, 205")>
+    Public Property ActivityForeColor As Color
+        Get
+            Return _activityForeColor
+        End Get
+        Set(value As Color)
+            SetValue(_activityForeColor, value)
+        End Set
+    End Property
+
+    Friend _activityGuideColor As Color = Color.Transparent
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden), EditorBrowsable(EditorBrowsableState.Never), Obsolete("轮次过程引导线已移除。")>
+    Public Property ActivityGuideColor As Color
+        Get
+            Return _activityGuideColor
+        End Get
+        Set(value As Color)
+            SetValue(_activityGuideColor, value)
+        End Set
+    End Property
+
+    Friend _toolCallBackColor As Color = Color.FromArgb(30, 220, 220, 220)
+    <Category("LakeUI - Agent"), Description("工具调用折叠块背景颜色"), DefaultValue(GetType(Color), "30, 220, 220, 220")>
+    Public Property ToolCallBackColor As Color
+        Get
+            Return _toolCallBackColor
+        End Get
+        Set(value As Color)
+            SetValue(_toolCallBackColor, value)
+        End Set
+    End Property
+
+    Friend _toolCallBorderColor As Color = Color.FromArgb(64, 220, 220, 220)
+    <Category("LakeUI - Agent"), Description("工具调用折叠块边框颜色"), DefaultValue(GetType(Color), "64, 220, 220, 220")>
+    Public Property ToolCallBorderColor As Color
+        Get
+            Return _toolCallBorderColor
+        End Get
+        Set(value As Color)
+            SetValue(_toolCallBorderColor, value)
+        End Set
+    End Property
+
+    Friend _toolCallForeColor As Color = Color.FromArgb(220, 220, 220)
+    <Category("LakeUI - Agent"), Description("工具调用标题颜色"), DefaultValue(GetType(Color), "220, 220, 220")>
+    Public Property ToolCallForeColor As Color
+        Get
+            Return _toolCallForeColor
+        End Get
+        Set(value As Color)
+            SetValue(_toolCallForeColor, value)
+        End Set
+    End Property
+
+    Friend _toolCallDetailForeColor As Color = Color.FromArgb(180, 190, 190, 190)
+    <Category("LakeUI - Agent"), Description("工具调用详情颜色"), DefaultValue(GetType(Color), "180, 190, 190, 190")>
+    Public Property ToolCallDetailForeColor As Color
+        Get
+            Return _toolCallDetailForeColor
+        End Get
+        Set(value As Color)
+            SetValue(_toolCallDetailForeColor, value)
+        End Set
+    End Property
+
+    Friend _agentErrorColor As Color = Color.FromArgb(235, 110, 100)
+    <Category("LakeUI - Agent"), Description("工具或轮次错误状态颜色"), DefaultValue(GetType(Color), "235, 110, 100")>
+    Public Property AgentErrorColor As Color
+        Get
+            Return _agentErrorColor
+        End Get
+        Set(value As Color)
+            SetValue(_agentErrorColor, value)
+        End Set
+    End Property
+
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property MaxRenderMilliseconds As Double
         Get
@@ -1511,6 +1866,44 @@ Public Class AgentRoom
         Return AddItem(ChatItemKind.AssistantMessage, text)
     End Function
 
+    ''' <summary>添加一轮可折叠的 Agent 工作记录标题。</summary>
+    Public Function AddTurnHeader(turnId As String, title As String, Optional expanded As Boolean = False) As ChatItem
+        Dim it = AddItem(ChatItemKind.TurnHeader, "")
+        it.Key = If(turnId, "")
+        it.Title = If(title, "")
+        it.IsExpanded = expanded
+        SynchronizeTurnVisibility(it.Key, expanded)
+        Return it
+    End Function
+
+    ''' <summary>添加一段属于指定轮次的过程说明。</summary>
+    Public Function AddAssistantActivity(turnId As String, text As String, Optional key As String = "") As ChatItem
+        Dim it = AddItem(ChatItemKind.AssistantActivity, text)
+        it.Key = If(key, "")
+        it.ParentTurnId = If(turnId, "")
+        SynchronizeItemVisibility(it)
+        Return it
+    End Function
+
+    ''' <summary>添加一项可独立展开的工具调用。text 用于承载参数与结果详情。</summary>
+    Public Function AddToolCall(turnId As String,
+                                title As String,
+                                text As String,
+                                Optional key As String = "",
+                                Optional expanded As Boolean = False,
+                                Optional running As Boolean = False,
+                                Optional isError As Boolean = False) As ChatItem
+        Dim it = AddItem(ChatItemKind.ToolCall, text)
+        it.Key = If(key, "")
+        it.Title = If(title, "")
+        it.ParentTurnId = If(turnId, "")
+        it.IsExpanded = expanded
+        it.IsRunning = running
+        it.IsError = isError
+        SynchronizeItemVisibility(it)
+        Return it
+    End Function
+
     ''' <summary>添加一张卡片消息（占满气泡区，无气泡尾）。</summary>
     Public Function AddCard(text As String) As ChatItem
         Return AddItem(ChatItemKind.Card, text)
@@ -1523,10 +1916,28 @@ Public Class AgentRoom
     End Sub
 
     Private Function AddItem(kind As ChatItemKind, text As String) As ChatItem
-        Dim it As New ChatItem(kind, text, scanLinks:=Not (kind = ChatItemKind.AssistantMessage AndAlso _enableMarkdownForAssistant))
+        Dim usesMarkdown = kind = ChatItemKind.AssistantMessage OrElse kind = ChatItemKind.AssistantActivity
+        Dim it As New ChatItem(kind, text, scanLinks:=Not (usesMarkdown AndAlso _enableMarkdownForAssistant))
         _items.Add(it)
         Return it
     End Function
+
+    ''' <summary>按宿主提供的稳定标识查找条目。</summary>
+    Public Function FindItem(key As String) As ChatItem
+        If String.IsNullOrEmpty(key) Then Return Nothing
+        Return _items.FirstOrDefault(Function(x) x IsNot Nothing AndAlso String.Equals(x.Key, key, StringComparison.Ordinal))
+    End Function
+
+    ''' <summary>设置整个轮次过程是否展开；最终助手消息不属于过程，因此始终可见。</summary>
+    Public Sub SetTurnExpanded(turnId As String, expanded As Boolean)
+        If String.IsNullOrEmpty(turnId) Then Return
+        Dim header = FindItem(turnId)
+        If header IsNot Nothing AndAlso header.Kind = ChatItemKind.TurnHeader Then
+            header.IsExpanded = expanded
+        Else
+            SynchronizeTurnVisibility(turnId, expanded)
+        End If
+    End Sub
 
     ''' <summary>向最后一条消息追加文本（用于流式输出）。若没有任何消息，则新建一条助手消息。</summary>
     Public Sub AppendToLast(more As String)
@@ -1560,6 +1971,24 @@ Public Class AgentRoom
         RequestViewportRefresh()
     End Sub
 
+    ''' <summary>当前是否位于底部。宿主可据此决定是否跟随增量输出。</summary>
+    <Browsable(False)>
+    Public ReadOnly Property IsPinnedToBottom As Boolean
+        Get
+            EnsureLayout()
+            Return _pinnedToBottom
+        End Get
+    End Property
+
+    ''' <summary>仅在用户原本位于底部时跟随最新内容，不会打断向上浏览。</summary>
+    Public Sub FollowLatestIfPinned()
+        If Not _autoScrollToBottom OrElse Not _pinnedToBottom Then Return
+        EnsureLayout()
+        Dim viewH As Integer = ContentViewportHeight()
+        _滚动偏移 = Math.Max(0, _contentHeight - viewH)
+        RequestViewportRefresh()
+    End Sub
+
     ''' <summary>立即提交并最终化最后一条流式 Markdown 消息。</summary>
     Public Sub CompleteLastStreamingMessage()
         If _items.Count = 0 Then Return
@@ -1582,6 +2011,49 @@ Public Class AgentRoom
         If item Is Nothing Then Return
         item.NeedsRelayout = True
         MarkContentLayoutDirty(GetItemIndex(item))
+        RequestViewportRefresh()
+    End Sub
+
+    Friend Sub SynchronizeItemVisibility(item As ChatItem)
+        If item Is Nothing Then Return
+        If String.IsNullOrEmpty(item.ParentTurnId) Then
+            item.SetVisibleInternal(True)
+        Else
+            Dim header = _items.FirstOrDefault(
+                Function(x) x IsNot Nothing AndAlso
+                    x.Kind = ChatItemKind.TurnHeader AndAlso
+                    String.Equals(x.Key, item.ParentTurnId, StringComparison.Ordinal))
+            item.SetVisibleInternal(header Is Nothing OrElse header.IsExpanded)
+        End If
+        MarkContentLayoutDirty(Math.Max(0, GetItemIndex(item)))
+        RequestViewportRefresh()
+    End Sub
+
+    Friend Sub OnItemExpansionChanged(item As ChatItem)
+        If item Is Nothing Then Return
+        If item.Kind = ChatItemKind.TurnHeader Then
+            SynchronizeTurnVisibility(item.Key, item.IsExpanded)
+        Else
+            NotifyItemChanged(item)
+        End If
+    End Sub
+
+    Private Sub SynchronizeTurnVisibility(turnId As String, expanded As Boolean)
+        If String.IsNullOrEmpty(turnId) Then Return
+        Dim firstChanged As Integer = Integer.MaxValue
+        For i = 0 To _items.Count - 1
+            Dim child = _items(i)
+            If child Is Nothing OrElse Not String.Equals(child.ParentTurnId, turnId, StringComparison.Ordinal) Then Continue For
+            If child.IsVisible <> expanded Then
+                child.SetVisibleInternal(expanded)
+                firstChanged = Math.Min(firstChanged, i)
+            End If
+        Next
+        Dim headerIndex = _items.ToList().FindIndex(
+            Function(x) x IsNot Nothing AndAlso x.Kind = ChatItemKind.TurnHeader AndAlso String.Equals(x.Key, turnId, StringComparison.Ordinal))
+        If headerIndex >= 0 Then firstChanged = Math.Min(firstChanged, headerIndex)
+        If firstChanged = Integer.MaxValue Then Return
+        MarkContentLayoutDirty(firstChanged)
         RequestViewportRefresh()
     End Sub
 
@@ -1724,6 +2196,22 @@ Public Class AgentRoom
         End If
     End Sub
 
+    Private Sub RequestItemRefresh(ParamArray items As ChatItem())
+        If items Is Nothing OrElse items.Length = 0 Then Return
+        EnsureLayout()
+        Dim area = GetContentArea()
+        Dim dirty As Rectangle = Rectangle.Empty
+        For Each item In items
+            If item Is Nothing OrElse item.OwnerRoom IsNot Me Then Continue For
+            Dim index = GetItemIndex(item)
+            If index < 0 Then Continue For
+            Dim itemRect = Rectangle.Intersect(area, GetItemViewportRect(index, area))
+            If itemRect.Width <= 0 OrElse itemRect.Height <= 0 Then Continue For
+            dirty = If(dirty.IsEmpty, itemRect, Rectangle.Union(dirty, itemRect))
+        Next
+        If Not dirty.IsEmpty Then RequestV3Render(dirty)
+    End Sub
+
     Private Sub InvalidateMeasureCache()
         _measureVersion += 1
         _textWidthCache.Clear()
@@ -1826,18 +2314,24 @@ Public Class AgentRoom
 
     Private Function ShouldUseMarkdown(it As ChatItem) As Boolean
         If it Is Nothing Then Return False
-        Return it.Kind = ChatItemKind.AssistantMessage AndAlso _enableMarkdownForAssistant
+        Return (it.Kind = ChatItemKind.AssistantMessage OrElse it.Kind = ChatItemKind.AssistantActivity) AndAlso
+               _enableMarkdownForAssistant
     End Function
 
     Private Function GetItemForeColor(it As ChatItem) As Color
         If it.Kind = ChatItemKind.Card Then Return _cardForeColor
         If it.Kind = ChatItemKind.UserMessage Then Return _userBubbleForeColor
+        If it.Kind = ChatItemKind.AssistantActivity Then Return _activityForeColor
+        If it.Kind = ChatItemKind.ToolCall Then Return _toolCallDetailForeColor
+        If it.Kind = ChatItemKind.TurnHeader Then Return _turnHeaderForeColor
         Return _assistantBubbleForeColor
     End Function
 
     Private Function GetItemBackColor(it As ChatItem) As Color
         If it.Kind = ChatItemKind.Card Then Return _cardBackColor
         If it.Kind = ChatItemKind.UserMessage Then Return _userBubbleBackColor
+        If it.Kind = ChatItemKind.ToolCall Then Return _toolCallBackColor
+        If it.Kind = ChatItemKind.AssistantMessage OrElse it.Kind = ChatItemKind.AssistantActivity Then Return _backColor1
         Return _assistantBubbleBackColor
     End Function
 
@@ -2072,40 +2566,46 @@ Public Class AgentRoom
     Private Sub RebuildItemLayout(areaWidth As Integer)
         Dim itemSpacing As Integer = Dpi(_itemSpacing)
         Dim count As Integer = _items.Count
-        Dim fullRebuild As Boolean = _layoutAreaWidth <> areaWidth OrElse
-                                     _itemLayoutTops.Count <> count OrElse
-                                     _layoutDirtyFromIndex <= 0
+        Dim rebuildFrom As Integer = 0
+        If areaWidth = _layoutAreaWidth AndAlso
+           _layoutDirtyFromIndex > 0 AndAlso
+           _layoutDirtyFromIndex <> Integer.MaxValue AndAlso
+           _itemLayoutTops.Count >= Math.Min(_layoutDirtyFromIndex, count) Then
+            rebuildFrom = Math.Min(_layoutDirtyFromIndex, count)
+        End If
 
-        If fullRebuild Then
-            _itemLayoutTops.Clear()
-            If _itemLayoutTops.Capacity < count Then _itemLayoutTops.Capacity = count
-            Dim totalHeight As Integer = 0
-            For i = 0 To count - 1
-                Dim it = _items(i)
-                If it.NeedsRelayout OrElse it.CachedRect.Width <> areaWidth Then
-                    LayoutItem(it, areaWidth)
-                End If
+        If _itemLayoutTops.Capacity < count Then _itemLayoutTops.Capacity = count
+
+        Dim totalHeight As Integer = 0
+        Dim hasVisibleItem As Boolean = False
+        If rebuildFrom > 0 Then
+            Dim previousIndex = rebuildFrom - 1
+            totalHeight = _itemLayoutTops(previousIndex)
+            Dim previousItem = _items(previousIndex)
+            If previousItem.IsVisible AndAlso previousItem.CachedRect.Height > 0 Then
+                totalHeight += previousItem.CachedRect.Height
+            End If
+            hasVisibleItem = totalHeight > 0
+        End If
+
+        If _itemLayoutTops.Count > rebuildFrom Then
+            _itemLayoutTops.RemoveRange(rebuildFrom, _itemLayoutTops.Count - rebuildFrom)
+        End If
+
+        For i = rebuildFrom To count - 1
+            Dim it = _items(i)
+            If it.NeedsRelayout OrElse it.CachedRect.Width <> areaWidth Then LayoutItem(it, areaWidth)
+
+            If it.IsVisible AndAlso it.CachedRect.Height > 0 Then
+                If hasVisibleItem Then totalHeight += itemSpacing
                 _itemLayoutTops.Add(totalHeight)
                 totalHeight += it.CachedRect.Height
-                If i < count - 1 Then totalHeight += itemSpacing
-            Next
-            _contentHeight = totalHeight
-        ElseIf count = 0 Then
-            _contentHeight = 0
-        Else
-            Dim startIndex As Integer = Math.Max(0, Math.Min(_layoutDirtyFromIndex, count - 1))
-            Dim y As Integer = _itemLayoutTops(startIndex)
-            For i = startIndex To count - 1
-                Dim it = _items(i)
-                If it.NeedsRelayout OrElse it.CachedRect.Width <> areaWidth Then
-                    LayoutItem(it, areaWidth)
-                End If
-                _itemLayoutTops(i) = y
-                y += it.CachedRect.Height
-                If i < count - 1 Then y += itemSpacing
-            Next
-            _contentHeight = y
-        End If
+                hasVisibleItem = True
+            Else
+                _itemLayoutTops.Add(totalHeight)
+            End If
+        Next
+        _contentHeight = totalHeight
 
         _layoutAreaWidth = areaWidth
         _contentHeightDirty = False
@@ -2186,14 +2686,42 @@ Public Class AgentRoom
 
     Private Sub LayoutItem(it As ChatItem, areaWidth As Integer)
         it.LineRanges.Clear()
+        it.HeaderRect = Rectangle.Empty
+        ResetToolLayoutState(it)
+        If Not it.IsVisible Then
+            it.BubbleRect = Rectangle.Empty
+            it.CachedRect = New Rectangle(0, 0, areaWidth, 0)
+            it.NeedsRelayout = False
+            Return
+        End If
+
         Dim font As Font = Me.Font
         Dim lineHeight As Integer = GetLineHeight(font)
 
+        If it.Kind = ChatItemKind.TurnHeader Then
+            Dim height = Dpi(_turnHeaderHeight)
+            it.HeaderRect = New Rectangle(0, 0, areaWidth, height)
+            it.BubbleRect = it.HeaderRect
+            it.CachedRect = New Rectangle(0, 0, areaWidth, height)
+            it.NeedsRelayout = False
+            Return
+        End If
+
+        If it.Kind = ChatItemKind.ToolCall Then
+            LayoutToolCallItem(it, areaWidth, font, lineHeight)
+            Return
+        End If
+
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
-        Dim pad As Padding = If(isCard, Dpi(_cardPadding), Dpi(_bubblePadding))
+        Dim isAssistantText = it.Kind = ChatItemKind.AssistantMessage OrElse it.Kind = ChatItemKind.AssistantActivity
+        Dim pad As Padding = If(isCard, Dpi(_cardPadding), If(isAssistantText, Dpi(_assistantPadding), Dpi(_bubblePadding)))
+        Dim activityMargin As Integer = If(it.Kind = ChatItemKind.AssistantActivity, Dpi(_activityHorizontalMargin), 0)
+        Dim availableWidth = Math.Max(40, areaWidth - activityMargin * 2)
         Dim maxBubbleW As Integer
         If isCard Then
             maxBubbleW = Math.Max(40, CInt(areaWidth * _cardMaxWidthRatio))
+        ElseIf isAssistantText Then
+            maxBubbleW = availableWidth
         Else
             Select Case _bubbleWidthMode
                 Case BubbleWidthMode.FillAvailable
@@ -2220,7 +2748,7 @@ Public Class AgentRoom
             ElseIf it.Kind = ChatItemKind.UserMessage Then
                 markdownBubbleX = areaWidth - markdownBubbleW
             Else
-                markdownBubbleX = 0
+                markdownBubbleX = activityMargin
             End If
 
             it.BubbleRect = New Rectangle(markdownBubbleX, 0, markdownBubbleW, markdownBubbleH)
@@ -2248,7 +2776,7 @@ Public Class AgentRoom
         Dim textBlockH As Integer = Math.Max(lineHeight, it.LineRanges.Count * lineHeight)
 
         Dim bubbleW, bubbleH As Integer
-        If _bubbleWidthMode = BubbleWidthMode.FillAvailable OrElse (Not isCard AndAlso _bubbleWidthMode = BubbleWidthMode.Fixed) Then
+        If isAssistantText OrElse _bubbleWidthMode = BubbleWidthMode.FillAvailable OrElse (Not isCard AndAlso _bubbleWidthMode = BubbleWidthMode.Fixed) Then
             bubbleW = maxBubbleW
         Else
             bubbleW = Math.Min(maxBubbleW, usedTextW + pad.Horizontal + borderExtra)
@@ -2262,7 +2790,7 @@ Public Class AgentRoom
         ElseIf it.Kind = ChatItemKind.UserMessage Then
             bubbleX = areaWidth - bubbleW
         Else
-            bubbleX = 0
+            bubbleX = activityMargin
         End If
 
         it.BubbleRect = New Rectangle(bubbleX, 0, bubbleW, bubbleH)
@@ -2270,6 +2798,126 @@ Public Class AgentRoom
         it.TextOriginY = pad.Top + borderInset
         it.CachedRect = New Rectangle(0, 0, areaWidth, bubbleH)
         it.NeedsRelayout = False
+    End Sub
+
+    Private Sub LayoutToolCallItem(it As ChatItem, areaWidth As Integer, font As Font, lineHeight As Integer)
+        Dim margin = Dpi(_activityHorizontalMargin)
+        Dim blockWidth = Math.Max(40, areaWidth - margin * 2)
+        Dim headerHeight = Dpi(_toolHeaderHeight)
+        Dim detailPadding As New Padding(Dpi(12), Dpi(8), Dpi(12), Dpi(10))
+        Dim detailViewportHeight As Integer = 0
+        Dim footerHeight As Integer = 0
+
+        If it.IsExpanded AndAlso Not String.IsNullOrWhiteSpace(it.Text) Then
+            Dim contentWidth = Math.Max(10, blockWidth - detailPadding.Horizontal)
+            it.EnsureLinksCurrent()
+            ChatTextHelper.WrapLines(it.Text, font, lineHeight, contentWidth, it.LineRanges, AddressOf MeasureTextWidthCached)
+            it.DetailContentHeight = Math.Max(lineHeight, it.LineRanges.Count * lineHeight) + detailPadding.Vertical
+            footerHeight = Dpi(30)
+
+            detailViewportHeight = it.DetailContentHeight
+            If _toolCallExpandedMaxHeight > 0 Then
+                Dim maxDetailHeight = Math.Max(0, Dpi(_toolCallExpandedMaxHeight) - headerHeight - footerHeight)
+                detailViewportHeight = Math.Min(detailViewportHeight, maxDetailHeight)
+            End If
+
+            it.DetailScrollBarVisible = _scrollBarWidth > 0 AndAlso detailViewportHeight > 0 AndAlso it.DetailContentHeight > detailViewportHeight
+            If it.DetailScrollBarVisible Then
+                Dim scrollReserve = Dpi(_scrollBarWidth) + V3_ScrollBarRenderer.Margin * 2 + Dpi(4)
+                contentWidth = Math.Max(10, blockWidth - detailPadding.Horizontal - scrollReserve)
+                ChatTextHelper.WrapLines(it.Text, font, lineHeight, contentWidth, it.LineRanges, AddressOf MeasureTextWidthCached)
+                it.DetailContentHeight = Math.Max(lineHeight, it.LineRanges.Count * lineHeight) + detailPadding.Vertical
+                detailViewportHeight = Math.Min(detailViewportHeight, it.DetailContentHeight)
+            End If
+        Else
+            it.LineRanges.Clear()
+            it.DetailContentHeight = 0
+            it.DetailScrollOffset = 0
+            it.DetailScrollBarVisible = False
+        End If
+
+        Dim totalHeight = headerHeight + detailViewportHeight + footerHeight
+        it.HeaderRect = New Rectangle(margin, 0, blockWidth, headerHeight)
+        it.DetailViewportRect = New Rectangle(margin, headerHeight, blockWidth, detailViewportHeight)
+        it.FooterRect = New Rectangle(margin, headerHeight + detailViewportHeight, blockWidth, footerHeight)
+        it.BubbleRect = New Rectangle(margin, 0, blockWidth, totalHeight)
+        it.TextOriginX = margin + detailPadding.Left
+        it.TextOriginY = headerHeight + detailPadding.Top
+
+        Dim copyPadding = Dpi(_toolCallCopyPadding)
+        Dim copyText = If(_toolCallCopyText, "")
+        Dim copyTextWidth = If(copyText.Length = 0, 0, MeasureTextWidthCached(copyText, font, lineHeight))
+        Dim requestedCopyWidth = If(copyText.Length = 0, 0, copyTextWidth + copyPadding.Horizontal)
+        Dim requestedCopyHeight = If(copyText.Length = 0, 0, lineHeight + copyPadding.Vertical)
+
+        Dim headerButtonSize = headerHeight
+        it.HeaderToggleButtonRect = New Rectangle(it.HeaderRect.Right - headerButtonSize, 0, headerButtonSize, headerHeight)
+        Dim headerCopyWidth = Math.Min(requestedCopyWidth, Math.Max(0, blockWidth - headerButtonSize))
+        Dim headerCopyHeight = Math.Min(requestedCopyHeight, headerHeight)
+        If headerCopyWidth > 0 AndAlso headerCopyHeight > 0 Then
+            it.HeaderCopyButtonRect = New Rectangle(it.HeaderToggleButtonRect.Left - headerCopyWidth,
+                                                    (headerHeight - headerCopyHeight) \ 2,
+                                                    headerCopyWidth,
+                                                    headerCopyHeight)
+        Else
+            it.HeaderCopyButtonRect = Rectangle.Empty
+        End If
+        If footerHeight > 0 Then
+            Dim footerButtonSize = footerHeight
+            it.FooterToggleButtonRect = New Rectangle(it.FooterRect.Right - footerButtonSize, it.FooterRect.Top, footerButtonSize, footerHeight)
+            Dim footerCopyWidth = Math.Min(requestedCopyWidth, Math.Max(0, blockWidth - footerButtonSize))
+            Dim footerCopyHeight = Math.Min(requestedCopyHeight, footerHeight)
+            If footerCopyWidth > 0 AndAlso footerCopyHeight > 0 Then
+                it.FooterCopyButtonRect = New Rectangle(it.FooterToggleButtonRect.Left - footerCopyWidth,
+                                                        it.FooterRect.Top + (footerHeight - footerCopyHeight) \ 2,
+                                                        footerCopyWidth,
+                                                        footerCopyHeight)
+            Else
+                it.FooterCopyButtonRect = Rectangle.Empty
+            End If
+        End If
+
+        If it.DetailScrollBarVisible Then
+            Dim maxOffset = Math.Max(0, it.DetailContentHeight - detailViewportHeight)
+            it.DetailScrollOffset = Math.Max(0, Math.Min(maxOffset, it.DetailScrollOffset))
+            UpdateToolDetailScrollBarLayout(it)
+        Else
+            it.DetailScrollOffset = 0
+            it.DetailScrollBar.TrackRect = Rectangle.Empty
+            it.DetailScrollBar.ThumbRect = Rectangle.Empty
+        End If
+        it.CachedRect = New Rectangle(0, 0, areaWidth, totalHeight)
+        it.NeedsRelayout = False
+    End Sub
+
+    Private Sub UpdateToolDetailScrollBarLayout(it As ChatItem)
+        If it Is Nothing OrElse Not it.DetailScrollBarVisible OrElse it.DetailViewportRect.IsEmpty Then Return
+        Dim detailPadding As New Padding(Dpi(12), Dpi(8), Dpi(12), Dpi(10))
+        Dim blockWidth = it.DetailViewportRect.Width
+        Dim detailHeight = it.DetailViewportRect.Height
+        it.DetailScrollBar.ComputeLayout(blockWidth, detailHeight, 0, 0,
+                                         detailPadding.Top, detailPadding.Bottom,
+                                         Dpi(_scrollBarWidth),
+                                         it.DetailContentHeight, detailHeight, it.DetailScrollOffset)
+        it.DetailScrollBar.VisualLeft += it.DetailViewportRect.Left
+        it.DetailScrollBar.TrackRect.Offset(it.DetailViewportRect.Left, it.DetailViewportRect.Top)
+        it.DetailScrollBar.ThumbRect.Offset(it.DetailViewportRect.Left, it.DetailViewportRect.Top)
+    End Sub
+
+    Private Shared Sub ResetToolLayoutState(it As ChatItem)
+        it.DetailViewportRect = Rectangle.Empty
+        it.FooterRect = Rectangle.Empty
+        it.HeaderCopyButtonRect = Rectangle.Empty
+        it.HeaderToggleButtonRect = Rectangle.Empty
+        it.FooterCopyButtonRect = Rectangle.Empty
+        it.FooterToggleButtonRect = Rectangle.Empty
+        If it.Kind <> ChatItemKind.ToolCall Then
+            it.DetailContentHeight = 0
+            it.DetailScrollOffset = 0
+            it.DetailScrollBarVisible = False
+            it.DetailScrollBar.TrackRect = Rectangle.Empty
+            it.DetailScrollBar.ThumbRect = Rectangle.Empty
+        End If
     End Sub
 #End Region
 #Region "绘制"
@@ -2294,11 +2942,10 @@ Public Class AgentRoom
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
-        Dim renderWatch = Diagnostics.Stopwatch.StartNew()
-        Dim layoutWatch = Diagnostics.Stopwatch.StartNew()
+        Dim renderStarted = Diagnostics.Stopwatch.GetTimestamp()
+        Dim layoutStarted = Diagnostics.Stopwatch.GetTimestamp()
         EnsureLayout()
-        layoutWatch.Stop()
-        _maxLayoutMilliseconds = Math.Max(_maxLayoutMilliseconds, layoutWatch.Elapsed.TotalMilliseconds)
+        _maxLayoutMilliseconds = Math.Max(_maxLayoutMilliseconds, ElapsedMilliseconds(layoutStarted))
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         Dim borderSize As Integer = Dpi(_borderSize)
@@ -2327,17 +2974,16 @@ Public Class AgentRoom
         Using context.PushClip(New RectangleF(area.Left, area.Top, area.Width, area.Height))
             For i As Integer = firstVisible To lastVisible
                 Dim it = _items(i)
+                If Not it.IsVisible OrElse it.CachedRect.Height <= 0 Then Continue For
                 Dim r As Rectangle = GetItemViewportRect(i, area)
                 If Not context.IntersectsDirty(r) Then Continue For
-                Dim shapeWatch = Diagnostics.Stopwatch.StartNew()
+                Dim shapeStarted = Diagnostics.Stopwatch.GetTimestamp()
                 DrawItemShapes_GPU(context, it, r, font, lineHeight, i)
-                shapeWatch.Stop()
-                _maxShapeDrawMilliseconds = Math.Max(_maxShapeDrawMilliseconds, shapeWatch.Elapsed.TotalMilliseconds)
+                _maxShapeDrawMilliseconds = Math.Max(_maxShapeDrawMilliseconds, ElapsedMilliseconds(shapeStarted))
                 If ShouldUseMarkdown(it) Then
-                    Dim markdownWatch = Diagnostics.Stopwatch.StartNew()
+                    Dim markdownStarted = Diagnostics.Stopwatch.GetTimestamp()
                     DrawMarkdownItem_GPU(context, it, r, area)
-                    markdownWatch.Stop()
-                    _maxMarkdownDrawMilliseconds = Math.Max(_maxMarkdownDrawMilliseconds, markdownWatch.Elapsed.TotalMilliseconds)
+                    _maxMarkdownDrawMilliseconds = Math.Max(_maxMarkdownDrawMilliseconds, ElapsedMilliseconds(markdownStarted))
                 End If
                 DrawItemText_GPU(context, it, r, font, lineHeight)
             Next
@@ -2356,10 +3002,13 @@ Public Class AgentRoom
         End If
 
         If borderSize > 0 Then DrawRoundedBorder_GPU(context, bgRect, borderRadius, _borderColor, borderSize)
-        renderWatch.Stop()
-        _lastRenderMilliseconds = renderWatch.Elapsed.TotalMilliseconds
+        _lastRenderMilliseconds = ElapsedMilliseconds(renderStarted)
         _maxRenderMilliseconds = Math.Max(_maxRenderMilliseconds, _lastRenderMilliseconds)
     End Sub
+
+    Private Shared Function ElapsedMilliseconds(startTimestamp As Long) As Double
+        Return Diagnostics.Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds
+    End Function
 
     Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
@@ -2384,6 +3033,39 @@ Public Class AgentRoom
                                    font As Font,
                                    lineHeight As Integer,
                                    itemIndex As Integer)
+        If Not it.IsVisible Then Return
+        If it.Kind = ChatItemKind.TurnHeader Then
+            DrawDisclosureGlyph_GPU(context, areaItemRect, it.HeaderRect, it.IsExpanded, If(it.IsError, _agentErrorColor, _turnHeaderForeColor))
+            Return
+        End If
+
+        If it.Kind = ChatItemKind.ToolCall Then
+            Dim blockAbs As New RectangleF(areaItemRect.X + it.BubbleRect.X,
+                                           areaItemRect.Y + it.BubbleRect.Y,
+                                           it.BubbleRect.Width,
+                                           it.BubbleRect.Height)
+            FillRoundedRect_GPU(context, blockAbs, Dpi(6), _toolCallBackColor)
+            DrawRoundedBorder_GPU(context, GetCenteredStrokeRect(blockAbs, 1.0F), Dpi(6), If(it.IsError, _agentErrorColor, _toolCallBorderColor), 1.0F)
+            If it.IsExpanded AndAlso Not String.IsNullOrWhiteSpace(it.Text) Then
+                Dim separatorY = areaItemRect.Y + it.HeaderRect.Bottom
+                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, _toolCallBorderColor, context.DeviceGeneration)
+                context.DeviceContext.DrawLine(New Vector2(areaItemRect.X + it.BubbleRect.Left + Dpi(10), separatorY),
+                                               New Vector2(areaItemRect.X + it.BubbleRect.Right - Dpi(10), separatorY),
+                                               brush, 1.0F)
+                If it.FooterRect.Height > 0 Then
+                    Dim footerSeparatorY = areaItemRect.Y + it.FooterRect.Top
+                    context.DeviceContext.DrawLine(New Vector2(areaItemRect.X + it.BubbleRect.Left + Dpi(10), footerSeparatorY),
+                                                   New Vector2(areaItemRect.X + it.BubbleRect.Right - Dpi(10), footerSeparatorY),
+                                                   brush, 1.0F)
+                End If
+            End If
+            DrawDisclosureGlyph_GPU(context, areaItemRect, it.HeaderRect, it.IsExpanded, If(it.IsError, _agentErrorColor, _toolCallForeColor))
+            DrawSelectionForItem_GPU(context, it, itemIndex, areaItemRect, font, lineHeight)
+            DrawToolActionButtons_GPU(context, it, areaItemRect, font)
+            If it.DetailScrollBarVisible Then DrawItemScrollBar_GPU(context, it, areaItemRect)
+            Return
+        End If
+
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
         Dim bubbleAbs As New Rectangle(areaItemRect.X + it.BubbleRect.X,
                                         areaItemRect.Y + it.BubbleRect.Y,
@@ -2402,10 +3084,113 @@ Public Class AgentRoom
             New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height),
             If(isCard, CSng(borderSize), 0.0F))
 
-        FillRoundedRect_GPU(context, rectF, radius, backColor)
+        If it.Kind = ChatItemKind.UserMessage OrElse isCard Then FillRoundedRect_GPU(context, rectF, radius, backColor)
         If isCard AndAlso borderSize > 0 Then DrawRoundedBorder_GPU(context, rectF, radius, _cardBorderColor, borderSize)
         DrawSelectionForItem_GPU(context, it, itemIndex, areaItemRect, font, lineHeight)
     End Sub
+
+    Private Sub DrawDisclosureGlyph_GPU(context As D3D_PaintContext,
+                                        areaItemRect As Rectangle,
+                                        localHeaderRect As Rectangle,
+                                        expanded As Boolean,
+                                        color As Color)
+        Dim cx = areaItemRect.X + localHeaderRect.Left + localHeaderRect.Height \ 2
+        Dim cy = areaItemRect.Y + localHeaderRect.Top + localHeaderRect.Height \ 2
+        Dim size = Math.Max(3, Dpi(5))
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        Dim strokeWidth = Math.Max(1.0F, Dpi(2.0F))
+        DrawChevronLines_GPU(context, cx, cy, size, expanded, brush, color, strokeWidth)
+    End Sub
+
+    Private Sub DrawToolActionButtons_GPU(context As D3D_PaintContext,
+                                          it As ChatItem,
+                                          areaItemRect As Rectangle,
+                                          font As Font)
+        Dim color = If(it.IsError, _agentErrorColor, _toolCallForeColor)
+        DrawCopyTextButton_GPU(context,
+                               OffsetRectangle(it.HeaderCopyButtonRect, areaItemRect.Location),
+                               color,
+                               Object.ReferenceEquals(_hoverToolCopyItem, it) AndAlso Not _hoverToolCopyIsFooter,
+                               font)
+        DrawToggleGlyph_GPU(context, OffsetRectangle(it.HeaderToggleButtonRect, areaItemRect.Location), it.IsExpanded, color)
+        If it.IsExpanded Then
+            DrawCopyTextButton_GPU(context,
+                                   OffsetRectangle(it.FooterCopyButtonRect, areaItemRect.Location),
+                                   color,
+                                   Object.ReferenceEquals(_hoverToolCopyItem, it) AndAlso _hoverToolCopyIsFooter,
+                                   font)
+            DrawToggleGlyph_GPU(context, OffsetRectangle(it.FooterToggleButtonRect, areaItemRect.Location), True, color)
+        End If
+    End Sub
+
+    Private Sub DrawCopyTextButton_GPU(context As D3D_PaintContext,
+                                       bounds As Rectangle,
+                                       color As Color,
+                                       isHovered As Boolean,
+                                       font As Font)
+        If bounds.IsEmpty Then Return
+        If isHovered AndAlso _toolCallCopyHoverBackColor.A > 0 Then
+            Dim radius = Math.Min(Dpi(_toolCallCopyCornerRadius), Math.Min(bounds.Width, bounds.Height) \ 2)
+            FillRoundedRect_GPU(context, New RectangleF(bounds.X, bounds.Y, bounds.Width, bounds.Height), radius, _toolCallCopyHoverBackColor)
+        End If
+
+        Dim padding = Dpi(_toolCallCopyPadding)
+        Dim textRect As New RectangleF(bounds.X + padding.Left,
+                                       bounds.Y + padding.Top,
+                                       Math.Max(0, bounds.Width - padding.Horizontal),
+                                       Math.Max(0, bounds.Height - padding.Vertical))
+        context.DrawText(If(_toolCallCopyText, ""), font, color, textRect,
+                         Vortice.DirectWrite.TextAlignment.Trailing,
+                         Vortice.DirectWrite.ParagraphAlignment.Center)
+    End Sub
+
+    Private Sub DrawToggleGlyph_GPU(context As D3D_PaintContext, bounds As Rectangle, expanded As Boolean, color As Color)
+        If bounds.IsEmpty Then Return
+        Dim cx = bounds.Left + bounds.Width \ 2
+        Dim cy = bounds.Top + bounds.Height \ 2
+        Dim size = Math.Max(3, Dpi(5))
+        Dim stroke = Math.Max(1.0F, Dpi(2.0F))
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        DrawChevronLines_GPU(context, cx, cy, size, expanded, brush, color, stroke)
+    End Sub
+
+    Private Shared Sub DrawChevronLines_GPU(context As D3D_PaintContext,
+                                            cx As Integer,
+                                            cy As Integer,
+                                            size As Integer,
+                                            expanded As Boolean,
+                                            brush As ID2D1SolidColorBrush,
+                                            color As Color,
+                                            strokeWidth As Single)
+        Dim firstPoint As Vector2
+        Dim vertex As Vector2
+        Dim lastPoint As Vector2
+        If expanded Then
+            firstPoint = New Vector2(cx - size, cy - size \ 2)
+            vertex = New Vector2(cx, cy + size \ 2)
+            lastPoint = New Vector2(cx + size, cy - size \ 2)
+        Else
+            firstPoint = New Vector2(cx - size \ 2, cy - size)
+            vertex = New Vector2(cx + size \ 2, cy)
+            lastPoint = New Vector2(cx - size \ 2, cy + size)
+        End If
+
+        context.DeviceContext.DrawLine(firstPoint, vertex, brush, strokeWidth)
+        context.DeviceContext.DrawLine(vertex, lastPoint, brush, strokeWidth)
+
+        ' Direct2D 分别栅格化两条线时，公共端点可能留下一个缺口；用方形连接点补齐直角。
+        Dim jointSize = Math.Max(1.0F, strokeWidth)
+        context.FillRectangle(New RectangleF(vertex.X - jointSize / 2.0F,
+                                             vertex.Y - jointSize / 2.0F,
+                                             jointSize,
+                                             jointSize), color)
+    End Sub
+
+    Private Shared Function OffsetRectangle(value As Rectangle, offset As Point) As Rectangle
+        If value.IsEmpty Then Return Rectangle.Empty
+        value.Offset(offset)
+        Return value
+    End Function
 
     Private Sub DrawSelectionForItem_GPU(context As D3D_PaintContext,
                                          it As ChatItem,
@@ -2422,8 +3207,30 @@ Public Class AgentRoom
         If selEnd <= selStart Then Return
 
         Dim textX As Integer = areaItemRect.X + it.TextOriginX
-        Dim textY As Integer = areaItemRect.Y + it.TextOriginY
+        Dim textY As Integer = areaItemRect.Y + it.TextOriginY - If(it.Kind = ChatItemKind.ToolCall, it.DetailScrollOffset, 0)
+        If it.Kind = ChatItemKind.ToolCall Then
+            Dim clipRect = OffsetRectangle(it.DetailViewportRect, areaItemRect.Location)
+            If clipRect.IsEmpty Then Return
+            Using context.PushClip(New RectangleF(clipRect.X, clipRect.Y, clipRect.Width, clipRect.Height))
+                DrawSelectionLines_GPU(context, it, font, lineHeight, textX, textY, selStart, selEnd, clipRect)
+            End Using
+            Return
+        End If
+        DrawSelectionLines_GPU(context, it, font, lineHeight, textX, textY, selStart, selEnd, Rectangle.Empty)
+    End Sub
+
+    Private Sub DrawSelectionLines_GPU(context As D3D_PaintContext,
+                                       it As ChatItem,
+                                       font As Font,
+                                       lineHeight As Integer,
+                                       textX As Integer,
+                                       textY As Integer,
+                                       selStart As Integer,
+                                       selEnd As Integer,
+                                       clipRect As Rectangle)
         For li = 0 To it.LineRanges.Count - 1
+            Dim lineY = textY + li * lineHeight
+            If Not clipRect.IsEmpty AndAlso (lineY + lineHeight < clipRect.Top OrElse lineY > clipRect.Bottom) Then Continue For
             Dim lr = it.LineRanges(li)
             Dim lineS As Integer = lr.Start, lineE As Integer = lr.Start + lr.Length
             Dim a As Integer = Math.Max(selStart, lineS)
@@ -2432,7 +3239,7 @@ Public Class AgentRoom
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
             Dim preW As Integer = MeasureTextWidthCached(line.Substring(0, a - lineS), font, lineHeight)
             Dim segW As Integer = MeasureTextWidthCached(line.Substring(a - lineS, b - a), font, lineHeight)
-            context.FillRectangle(New RectangleF(textX + preW, textY + li * lineHeight, segW, lineHeight), _selectionBackColor)
+            context.FillRectangle(New RectangleF(textX + preW, lineY, segW, lineHeight), _selectionBackColor)
         Next
     End Sub
 
@@ -2441,6 +3248,26 @@ Public Class AgentRoom
                                  areaItemRect As Rectangle,
                                  font As Font,
                                  lineHeight As Integer)
+        If Not it.IsVisible Then Return
+        If it.Kind = ChatItemKind.TurnHeader OrElse it.Kind = ChatItemKind.ToolCall Then
+            Dim header = it.HeaderRect
+            Dim titleColor = If(it.IsError, _agentErrorColor, If(it.Kind = ChatItemKind.TurnHeader, _turnHeaderForeColor, _toolCallForeColor))
+            Dim titleLeft = header.Left + header.Height
+            Dim toolActionLeft = If(it.HeaderCopyButtonRect.IsEmpty,
+                                    it.HeaderToggleButtonRect.Left,
+                                    it.HeaderCopyButtonRect.Left)
+            Dim rightReserve = If(it.Kind = ChatItemKind.ToolCall,
+                                  header.Right - toolActionLeft + Dpi(4),
+                                  Dpi(8))
+            Dim titleRect As New RectangleF(areaItemRect.X + titleLeft,
+                                            areaItemRect.Y + header.Top,
+                                            Math.Max(0, header.Right - titleLeft - rightReserve),
+                                            header.Height)
+            context.DrawText(If(it.Title, ""), font, titleColor, titleRect,
+                             Vortice.DirectWrite.TextAlignment.Leading,
+                             Vortice.DirectWrite.ParagraphAlignment.Center)
+            If it.Kind = ChatItemKind.TurnHeader OrElse Not it.IsExpanded Then Return
+        End If
         If ShouldUseMarkdown(it) Then Return
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
         Dim foreColor As Color
@@ -2448,15 +3275,40 @@ Public Class AgentRoom
             foreColor = _cardForeColor
         ElseIf it.Kind = ChatItemKind.UserMessage Then
             foreColor = _userBubbleForeColor
+        ElseIf it.Kind = ChatItemKind.AssistantActivity Then
+            foreColor = _activityForeColor
+        ElseIf it.Kind = ChatItemKind.ToolCall Then
+            foreColor = _toolCallDetailForeColor
         Else
             foreColor = _assistantBubbleForeColor
         End If
         Dim textX As Integer = areaItemRect.X + it.TextOriginX
-        Dim textY As Integer = areaItemRect.Y + it.TextOriginY
+        Dim textY As Integer = areaItemRect.Y + it.TextOriginY - If(it.Kind = ChatItemKind.ToolCall, it.DetailScrollOffset, 0)
+        If it.Kind = ChatItemKind.ToolCall Then
+            Dim clipRect = OffsetRectangle(it.DetailViewportRect, areaItemRect.Location)
+            If clipRect.IsEmpty Then Return
+            Using context.PushClip(New RectangleF(clipRect.X, clipRect.Y, clipRect.Width, clipRect.Height))
+                DrawPlainTextLines_GPU(context, it, textX, textY, font, lineHeight, foreColor, clipRect)
+            End Using
+            Return
+        End If
+        DrawPlainTextLines_GPU(context, it, textX, textY, font, lineHeight, foreColor, Rectangle.Empty)
+    End Sub
+
+    Private Sub DrawPlainTextLines_GPU(context As D3D_PaintContext,
+                                       it As ChatItem,
+                                       textX As Integer,
+                                       textY As Integer,
+                                       font As Font,
+                                       lineHeight As Integer,
+                                       foreColor As Color,
+                                       clipRect As Rectangle)
         For li = 0 To it.LineRanges.Count - 1
+            Dim lineY = textY + li * lineHeight
+            If Not clipRect.IsEmpty AndAlso (lineY + lineHeight < clipRect.Top OrElse lineY > clipRect.Bottom) Then Continue For
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            DrawLineWithLinks_GPU(context, it, line, lr.Start, textX, textY + li * lineHeight, font, lineHeight, foreColor)
+            DrawLineWithLinks_GPU(context, it, line, lr.Start, textX, lineY, font, lineHeight, foreColor)
         Next
     End Sub
 
@@ -2542,12 +3394,23 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawScrollBar_GPU(context As D3D_PaintContext, scrollBarWidth As Integer)
-        If _scrollBar.TrackRect.IsEmpty Then Return
+        DrawScrollBarRenderer_GPU(context, _scrollBar, scrollBarWidth, Point.Empty)
+    End Sub
+
+    Private Sub DrawItemScrollBar_GPU(context As D3D_PaintContext, it As ChatItem, areaItemRect As Rectangle)
+        DrawScrollBarRenderer_GPU(context, it.DetailScrollBar, Dpi(_scrollBarWidth), areaItemRect.Location)
+    End Sub
+
+    Private Sub DrawScrollBarRenderer_GPU(context As D3D_PaintContext,
+                                          renderer As V3_ScrollBarRenderer,
+                                          scrollBarWidth As Integer,
+                                          offset As Point)
+        If renderer Is Nothing OrElse renderer.TrackRect.IsEmpty Then Return
         Dim width As Single = Math.Max(1.0F, scrollBarWidth)
-        Dim trackArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.TrackRect.Y, width, _scrollBar.TrackRect.Height)
-        Dim thumbArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.ThumbRect.Y, width, _scrollBar.ThumbRect.Height)
+        Dim trackArea As New RectangleF(offset.X + renderer.VisualLeft, offset.Y + renderer.TrackRect.Y, width, renderer.TrackRect.Height)
+        Dim thumbArea As New RectangleF(offset.X + renderer.VisualLeft, offset.Y + renderer.ThumbRect.Y, width, renderer.ThumbRect.Height)
         FillRoundedRect_GPU(context, trackArea, Math.Min(width / 2.0F, trackArea.Height / 2.0F), _scrollBarTrackColor)
-        Dim thumbColor = If(_scrollBar.IsDragging OrElse _scrollBar.IsHover, _scrollBarThumbHoverColor, _scrollBarThumbColor)
+        Dim thumbColor = If(renderer.IsDragging OrElse renderer.IsHover, _scrollBarThumbHoverColor, _scrollBarThumbColor)
         FillRoundedRect_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), thumbColor)
     End Sub
 
@@ -2871,7 +3734,11 @@ Public Class AgentRoom
             If pt.Y > r.Bottom Then Continue For
             ' 在该项垂直范围内
             Dim textX As Integer = r.X + it.TextOriginX
-            Dim textY As Integer = r.Y + it.TextOriginY
+            Dim textY As Integer = r.Y + it.TextOriginY - If(it.Kind = ChatItemKind.ToolCall, it.DetailScrollOffset, 0)
+            If it.Kind = ChatItemKind.ToolCall Then
+                Dim detailRect = OffsetRectangle(it.DetailViewportRect, r.Location)
+                If Not detailRect.Contains(pt) Then Continue For
+            End If
             Dim relY As Integer = pt.Y - textY
             If it.LineRanges.Count = 0 Then
                 result = New TextPos(i, 0) : Return True
@@ -2905,7 +3772,11 @@ Public Class AgentRoom
             Dim r = GetItemViewportRect(i, area)
             If pt.Y < r.Top OrElse pt.Y > r.Bottom Then Continue For
             Dim textX As Integer = r.X + it.TextOriginX
-            Dim textY As Integer = r.Y + it.TextOriginY
+            Dim textY As Integer = r.Y + it.TextOriginY - If(it.Kind = ChatItemKind.ToolCall, it.DetailScrollOffset, 0)
+            If it.Kind = ChatItemKind.ToolCall Then
+                Dim detailRect = OffsetRectangle(it.DetailViewportRect, r.Location)
+                If Not detailRect.Contains(pt) Then Continue For
+            End If
             If ShouldUseMarkdown(it) Then
                 Dim renderer = it.MarkdownRenderer
                 If renderer Is Nothing OrElse renderer.IsDisposed Then Continue For
@@ -2933,6 +3804,125 @@ Public Class AgentRoom
         Next
         Return New LinkHitInfo()
     End Function
+
+    Private Function HitTestExpandableItem(pt As Point) As ChatItem
+        EnsureLayout()
+        Dim area = GetContentArea()
+        If Not area.Contains(pt) Then Return Nothing
+        Dim firstVisible As Integer
+        Dim lastVisible As Integer
+        GetVisibleItemRange(area, firstVisible, lastVisible)
+        For i = firstVisible To lastVisible
+            Dim it = _items(i)
+            If it Is Nothing OrElse Not it.IsVisible OrElse
+               (it.Kind <> ChatItemKind.TurnHeader AndAlso it.Kind <> ChatItemKind.ToolCall) Then Continue For
+            Dim itemRect = GetItemViewportRect(i, area)
+            Dim headerRect As New Rectangle(itemRect.X + it.HeaderRect.X,
+                                            itemRect.Y + it.HeaderRect.Y,
+                                            it.HeaderRect.Width,
+                                            it.HeaderRect.Height)
+            If headerRect.Contains(pt) Then Return it
+        Next
+        Return Nothing
+    End Function
+
+    Private Function HitTestToolAction(pt As Point) As ToolActionHitInfo
+        EnsureLayout()
+        Dim area = GetContentArea()
+        If Not area.Contains(pt) Then Return New ToolActionHitInfo()
+        Dim firstVisible As Integer
+        Dim lastVisible As Integer
+        GetVisibleItemRange(area, firstVisible, lastVisible)
+        For i = firstVisible To lastVisible
+            Dim it = _items(i)
+            If it Is Nothing OrElse Not it.IsVisible OrElse it.Kind <> ChatItemKind.ToolCall Then Continue For
+            Dim itemRect = GetItemViewportRect(i, area)
+            Dim localPoint As New Point(pt.X - itemRect.X, pt.Y - itemRect.Y)
+            If it.HeaderCopyButtonRect.Contains(localPoint) OrElse it.FooterCopyButtonRect.Contains(localPoint) Then
+                Return New ToolActionHitInfo With {
+                    .Item = it,
+                    .Action = ToolActionKind.Copy,
+                    .IsFooter = it.FooterCopyButtonRect.Contains(localPoint)
+                }
+            End If
+            If it.HeaderToggleButtonRect.Contains(localPoint) OrElse it.FooterToggleButtonRect.Contains(localPoint) Then
+                Return New ToolActionHitInfo With {.Item = it, .Action = ToolActionKind.Toggle}
+            End If
+        Next
+        Return New ToolActionHitInfo()
+    End Function
+
+    Private Function HitTestScrollableTool(pt As Point, ByRef localPoint As Point) As ChatItem
+        localPoint = Point.Empty
+        EnsureLayout()
+        Dim area = GetContentArea()
+        If Not area.Contains(pt) Then Return Nothing
+        Dim firstVisible As Integer
+        Dim lastVisible As Integer
+        GetVisibleItemRange(area, firstVisible, lastVisible)
+        For i = firstVisible To lastVisible
+            Dim it = _items(i)
+            If it Is Nothing OrElse Not it.IsVisible OrElse Not it.DetailScrollBarVisible Then Continue For
+            Dim itemRect = GetItemViewportRect(i, area)
+            Dim candidate As New Point(pt.X - itemRect.X, pt.Y - itemRect.Y)
+            If it.DetailViewportRect.Contains(candidate) OrElse it.DetailScrollBar.TrackRect.Contains(candidate) Then
+                localPoint = candidate
+                Return it
+            End If
+        Next
+        Return Nothing
+    End Function
+
+    Private Sub CopyToolDetails(item As ChatItem)
+        If item Is Nothing Then Return
+        Try
+            Clipboard.SetText(If(item.Text, ""))
+        Catch
+        End Try
+    End Sub
+
+    Private Sub SetToolDetailScrollOffset(item As ChatItem, value As Integer)
+        If item Is Nothing OrElse Not item.DetailScrollBarVisible Then Return
+        Dim maxOffset = Math.Max(0, item.DetailContentHeight - item.DetailViewportRect.Height)
+        Dim clamped = Math.Max(0, Math.Min(maxOffset, value))
+        If item.DetailScrollOffset = clamped Then Return
+        item.DetailScrollOffset = clamped
+        UpdateToolDetailScrollBarLayout(item)
+        RequestItemRefresh(item)
+    End Sub
+
+    Private Function GetToolLocalPoint(item As ChatItem, clientPoint As Point) As Point
+        If item Is Nothing OrElse item.CachedIndex < 0 Then Return clientPoint
+        Dim itemRect = GetItemViewportRect(item.CachedIndex, GetContentArea())
+        Return New Point(clientPoint.X - itemRect.X, clientPoint.Y - itemRect.Y)
+    End Function
+
+    Private Function UpdateToolScrollHover(clientPoint As Point) As Boolean
+        Dim localPoint As Point
+        Dim nextItem = HitTestScrollableTool(clientPoint, localPoint)
+        Dim previousItem = _hoverToolScrollItem
+        Dim changed As Boolean = False
+        If Not Object.ReferenceEquals(previousItem, nextItem) Then
+            If previousItem IsNot Nothing AndAlso previousItem.DetailScrollBar.ResetHover() Then changed = True
+            _hoverToolScrollItem = nextItem
+            changed = True
+        End If
+        If nextItem IsNot Nothing AndAlso nextItem.DetailScrollBar.UpdateHover(localPoint) Then changed = True
+        If changed Then RequestItemRefresh(previousItem, nextItem)
+        Return changed
+    End Function
+
+    Private Function UpdateToolCopyHover(toolAction As ToolActionHitInfo) As Boolean
+        Dim nextItem = If(toolAction.Action = ToolActionKind.Copy, toolAction.Item, Nothing)
+        Dim nextIsFooter = nextItem IsNot Nothing AndAlso toolAction.IsFooter
+        If Object.ReferenceEquals(_hoverToolCopyItem, nextItem) AndAlso
+           _hoverToolCopyIsFooter = nextIsFooter Then Return False
+        Dim previousItem = _hoverToolCopyItem
+        _hoverToolCopyItem = nextItem
+        _hoverToolCopyIsFooter = nextIsFooter
+        RequestItemRefresh(previousItem, nextItem)
+        Return True
+    End Function
 #End Region
 #Region "鼠标与键盘"
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -2951,6 +3941,43 @@ Public Class AgentRoom
                 Dim viewH = ContentViewportHeight()
                 Dim totalH = Math.Max(viewH, _contentHeight)
                 SetScrollOffset(_scrollBar.TrackClick(e.Location, _滚动偏移, totalH, viewH))
+                Return
+            End If
+
+            Dim toolAction = HitTestToolAction(e.Location)
+            If toolAction.HasValue Then
+                If toolAction.Action = ToolActionKind.Copy Then
+                    CopyToolDetails(toolAction.Item)
+                Else
+                    toolAction.Item.IsExpanded = Not toolAction.Item.IsExpanded
+                End If
+                ClearSelection()
+                Return
+            End If
+
+            Dim toolLocalPoint As Point
+            Dim scrollableTool = HitTestScrollableTool(e.Location, toolLocalPoint)
+            If scrollableTool IsNot Nothing Then
+                If scrollableTool.DetailScrollBar.BeginDrag(toolLocalPoint, scrollableTool.DetailScrollOffset) Then
+                    _activeToolScrollItem = scrollableTool
+                    Capture = True
+                    RequestItemRefresh(scrollableTool)
+                    Return
+                End If
+                If scrollableTool.DetailScrollBar.TrackRect.Contains(toolLocalPoint) Then
+                    SetToolDetailScrollOffset(scrollableTool,
+                        scrollableTool.DetailScrollBar.TrackClick(toolLocalPoint,
+                                                                  scrollableTool.DetailScrollOffset,
+                                                                  scrollableTool.DetailContentHeight,
+                                                                  scrollableTool.DetailViewportRect.Height))
+                    Return
+                End If
+            End If
+
+            Dim expandableItem = HitTestExpandableItem(e.Location)
+            If expandableItem IsNot Nothing Then
+                expandableItem.IsExpanded = Not expandableItem.IsExpanded
+                ClearSelection()
                 Return
             End If
 
@@ -2981,6 +4008,14 @@ Public Class AgentRoom
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
+        If _activeToolScrollItem IsNot Nothing AndAlso _activeToolScrollItem.DetailScrollBar.IsDragging Then
+            Dim localPoint = GetToolLocalPoint(_activeToolScrollItem, e.Location)
+            SetToolDetailScrollOffset(_activeToolScrollItem,
+                _activeToolScrollItem.DetailScrollBar.DragMove(localPoint.Y,
+                                                                _activeToolScrollItem.DetailContentHeight,
+                                                                _activeToolScrollItem.DetailViewportRect.Height))
+            Return
+        End If
         If _scrollBar.IsDragging Then
             Dim viewH = ContentViewportHeight()
             Dim totalH = Math.Max(viewH, _contentHeight)
@@ -3009,13 +4044,16 @@ Public Class AgentRoom
         End If
 
         ' 悬停光标
+        Dim toolAction = HitTestToolAction(e.Location)
+        UpdateToolCopyHover(toolAction)
+        Dim expandableItem = HitTestExpandableItem(e.Location)
         Dim link = HitTestLink(e.Location)
         If Not String.Equals(link.Url, _hoverLinkUrl, StringComparison.Ordinal) Then
             _hoverLinkUrl = link.Url
             RequestViewportRefresh()
         End If
         Dim desiredCursor As Cursor
-        If link.HasValue Then
+        If toolAction.HasValue OrElse expandableItem IsNot Nothing OrElse link.HasValue Then
             desiredCursor = Cursors.Hand
         ElseIf _selectableText AndAlso GetContentArea().Contains(e.Location) Then
             desiredCursor = Cursors.IBeam
@@ -3029,10 +4067,18 @@ Public Class AgentRoom
         ElseIf _scrollBar.ResetHover() Then
             RequestViewportRefresh()
         End If
+        UpdateToolScrollHover(e.Location)
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
+        If _activeToolScrollItem IsNot Nothing Then
+            Dim activeItem = _activeToolScrollItem
+            _activeToolScrollItem.DetailScrollBar.EndDrag()
+            _activeToolScrollItem = Nothing
+            Capture = False
+            RequestItemRefresh(activeItem)
+        End If
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
             Capture = False
@@ -3060,12 +4106,21 @@ Public Class AgentRoom
             _hoverLinkUrl = Nothing
             RequestViewportRefresh()
         End If
+        UpdateToolCopyHover(New ToolActionHitInfo())
         If _scrollBar.ResetHover() Then RequestViewportRefresh()
+        UpdateToolScrollHover(New Point(Integer.MinValue, Integer.MinValue))
         Cursor = Cursors.Default
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
+        Dim localPoint As Point
+        Dim scrollableTool = HitTestScrollableTool(e.Location, localPoint)
+        If scrollableTool IsNot Nothing Then
+            SetToolDetailScrollOffset(scrollableTool,
+                scrollableTool.DetailScrollOffset - Math.Sign(e.Delta) * Dpi(_wheelStep))
+            Return
+        End If
         ScrollByPixels(-Math.Sign(e.Delta) * Dpi(_wheelStep))
     End Sub
 
@@ -3212,7 +4267,7 @@ Friend Module ChatTextHelper
                                measureWidth As Func(Of String, Font, Integer, Integer)) As Integer
         Dim total As Integer = [end] - start
         If total <= 0 Then Return 0
-        Dim full As String = text.Substring(start, total)
+        Dim full As String = If(start = 0 AndAlso total = text.Length, text, text.Substring(start, total))
         If InvokeMeasureWidth(full, font, lineHeight, measureWidth) <= maxWidth Then Return total
         Dim lo As Integer = 1, hi As Integer = total
         While lo < hi
