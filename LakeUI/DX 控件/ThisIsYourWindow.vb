@@ -646,6 +646,17 @@ Public Class ThisIsYourWindow
         Return New Rectangle(Point.Empty, size)
     End Function
 
+    ''' <summary>
+    ''' 返回窗口当前是否仍由 Win32 视为最大化。
+    ''' 尺寸移动优化会暂时跳过 WinForms 的 WM_SIZE 默认处理，
+    ''' 此时 Form.WindowState 可能晚于原生窗口状态更新。
+    ''' </summary>
+    Private Shared Function 窗口当前已最大化(form As Form) As Boolean
+        If form Is Nothing OrElse form.IsDisposed Then Return False
+        If form.IsHandleCreated Then Return IsZoomed(form.Handle)
+        Return form.WindowState = FormWindowState.Maximized
+    End Function
+
     Private Sub 通知重绘(Optional immediate As Boolean = True)
         For Each s In _forms.Values
             Dim frm = s.HostForm
@@ -774,15 +785,20 @@ Public Class ThisIsYourWindow
             Dim currentBounds As Rectangle = 获取窗口屏幕矩形(s.HostForm)
             boundsChanged = (currentBounds <> s.DeferredBeginBounds)
             sizeChanged = (currentBounds.Size <> s.DeferredBeginBounds.Size)
-            If boundsChanged Then
-                更新控件边界缓存(s.HostForm)
-            End If
+            ' WM_SIZE 在尺寸移动期间被延迟处理；无论边界是否变化，都要让
+            ' WinForms 重新读取原生窗口状态，否则最大化拖回窗口化后
+            ' Form.WindowState 可能仍为 Maximized。
+            更新控件边界缓存(s.HostForm)
         End If
 
         s.DeferredBeginBounds = Rectangle.Empty
         s.LayoutSignature = -1
         If _阴影模式 <> ShadowModeEnum.DWM AndAlso s.HostForm.IsHandleCreated Then
             切换动画样式(s.HostForm.Handle, False)
+            ' 切换动画样式只改窗口样式位；这里补一次 frame changed，
+            ' 让恢复后的 WS_THICKFRAME / 非客户区命中区域立即生效。
+            SetWindowPos(s.HostForm.Handle, IntPtr.Zero, 0, 0, 0, 0,
+                         CUInt(SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER Or SWP_NOOWNERZORDER))
         End If
         RecalculateButtonBounds(s)
         更新阴影(s)
@@ -1843,7 +1859,8 @@ Public Class ThisIsYourWindow
 
     Private Sub 更新阴影(s As PerFormState, boundsOverride As Rectangle, forceFullRender As Boolean)
         If s Is Nothing OrElse s.HostForm Is Nothing Then Return
-        Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
+        ' 阴影显隐也以原生窗口状态为准，避免还原过渡期间误判为最大化。
+        Dim zoomed As Boolean = 窗口当前已最大化(s.HostForm)
         Dim minimized As Boolean = (s.HostForm.WindowState = FormWindowState.Minimized)
 
         If _阴影模式 <> ShadowModeEnum.Layer OrElse s.IsFullScreen OrElse zoomed OrElse minimized OrElse Not s.HostForm.Visible Then
@@ -3502,7 +3519,9 @@ Public Class ThisIsYourWindow
         Dim w As Integer = clientSize.Width
         Dim h As Integer = clientSize.Height
         Dim bw As Integer = Math.Max(1, 缩放逻辑尺寸(s.HostForm, _调整边框宽度))
-        Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
+        ' 以原生窗口状态为准。标题栏拖动还原时，WinForms WindowState
+        ' 可能在 WM_SIZE 之后才更新，不能据此永久关闭边缘命中。
+        Dim zoomed As Boolean = 窗口当前已最大化(s.HostForm)
 
         If Not s.IsFullScreen AndAlso _允许调整大小 AndAlso Not (zoomed AndAlso _最大化时隐藏调整边框) Then
             If clientPoint.X < bw AndAlso clientPoint.Y < bw Then Return HTTOPLEFT
