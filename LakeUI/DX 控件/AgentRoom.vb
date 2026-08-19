@@ -2775,8 +2775,12 @@ Public Class AgentRoom
 
         Dim textBlockH As Integer = Math.Max(lineHeight, it.LineRanges.Count * lineHeight)
 
+        Dim autoWrappedUserMessage = it.Kind = ChatItemKind.UserMessage AndAlso
+                                     HasAutoWrappedLine(it.Text, font, lineHeight, contentMaxW)
         Dim bubbleW, bubbleH As Integer
-        If isAssistantText OrElse _bubbleWidthMode = BubbleWidthMode.FillAvailable OrElse (Not isCard AndAlso _bubbleWidthMode = BubbleWidthMode.Fixed) Then
+        If isAssistantText OrElse autoWrappedUserMessage OrElse
+           _bubbleWidthMode = BubbleWidthMode.FillAvailable OrElse
+           (Not isCard AndAlso _bubbleWidthMode = BubbleWidthMode.Fixed) Then
             bubbleW = maxBubbleW
         Else
             bubbleW = Math.Min(maxBubbleW, usedTextW + pad.Horizontal + borderExtra)
@@ -2799,6 +2803,28 @@ Public Class AgentRoom
         it.CachedRect = New Rectangle(0, 0, areaWidth, bubbleH)
         it.NeedsRelayout = False
     End Sub
+
+    Private Function HasAutoWrappedLine(text As String,
+                                        font As Font,
+                                        lineHeight As Integer,
+                                        contentMaxWidth As Integer) As Boolean
+        If String.IsNullOrEmpty(text) OrElse contentMaxWidth <= 0 Then Return False
+        Dim start As Integer = 0
+        For i = 0 To text.Length
+            Dim atEnd = i = text.Length
+            If Not atEnd AndAlso text(i) <> ControlChars.Cr AndAlso text(i) <> ControlChars.Lf Then Continue For
+            If i > start Then
+                Dim segment = text.Substring(start, i - start)
+                If MeasureTextWidthCached(segment, font, lineHeight) > contentMaxWidth Then Return True
+            End If
+            If atEnd Then Exit For
+            If text(i) = ControlChars.Cr AndAlso i + 1 < text.Length AndAlso text(i + 1) = ControlChars.Lf Then
+                i += 1
+            End If
+            start = i + 1
+        Next
+        Return False
+    End Function
 
     Private Sub LayoutToolCallItem(it As ChatItem, areaWidth As Integer, font As Font, lineHeight As Integer)
         Dim margin = Dpi(_activityHorizontalMargin)
@@ -3845,7 +3871,8 @@ Public Class AgentRoom
                     .IsFooter = it.FooterCopyButtonRect.Contains(localPoint)
                 }
             End If
-            If it.HeaderToggleButtonRect.Contains(localPoint) OrElse it.FooterToggleButtonRect.Contains(localPoint) Then
+            If it.HeaderToggleButtonRect.Contains(localPoint) OrElse
+               (it.IsExpanded AndAlso it.FooterRect.Contains(localPoint)) Then
                 Return New ToolActionHitInfo With {.Item = it, .Action = ToolActionKind.Toggle}
             End If
         Next
