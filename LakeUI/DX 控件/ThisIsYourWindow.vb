@@ -2536,7 +2536,9 @@ Public Class ThisIsYourWindow
         If s Is Nothing OrElse Not s.IsFullScreen Then Return
 
         Dim captionHeight As Integer = Math.Max(1, 取缩放标题栏高度(s.HostForm))
-        If clientPoint.Y <= 1 Then
+        Dim topEdgeTrigger As Boolean = (clientPoint.Y <= 1)
+        Dim captionAreaTrigger As Boolean = (clientPoint.Y >= 0 AndAlso clientPoint.Y <= captionHeight)
+        If topEdgeTrigger OrElse captionAreaTrigger Then
             显示全屏标题栏(s)
         ElseIf s.FullScreenCaptionVisible AndAlso clientPoint.Y > captionHeight Then
             启动全屏标题栏隐藏计时器(s)
@@ -2607,11 +2609,25 @@ Public Class ThisIsYourWindow
     Public Function PreFilterMessage(ByRef m As Message) As Boolean Implements IMessageFilter.PreFilterMessage
         If m.Msg = WM_MOUSEMOVE OrElse m.Msg = WM_NCMOUSEMOVE Then
             Dim mouseState = 查找消息所属状态(m.HWnd)
+            Dim cursorPoint As NATIVEPOINT
+            Dim hasCursorPoint As Boolean = GetCursorPos(cursorPoint)
+            ' 某些原生/特殊子窗口会吞掉句柄到 Form 的托管映射；全屏窗体覆盖
+            ' 显示器时，改用光标屏幕坐标兜底识别，确保标题栏热区仍可唤出。
+            If (mouseState Is Nothing OrElse Not mouseState.IsFullScreen) AndAlso hasCursorPoint Then
+                Dim screenPoint As New Point(cursorPoint.X, cursorPoint.Y)
+                For Each candidate In _forms.Values
+                    If candidate Is Nothing OrElse Not candidate.IsFullScreen OrElse
+                       candidate.HostForm Is Nothing OrElse candidate.HostForm.IsDisposed Then Continue For
+                    If 获取窗口屏幕矩形(candidate.HostForm).Contains(screenPoint) Then
+                        mouseState = candidate
+                        Exit For
+                    End If
+                Next
+            End If
             If mouseState IsNot Nothing AndAlso mouseState.IsFullScreen Then
-                Dim p As NATIVEPOINT
-                If GetCursorPos(p) Then
+                If hasCursorPoint Then
                     处理全屏鼠标移动(mouseState,
-                                     mouseState.HostForm.PointToClient(New Point(p.X, p.Y)))
+                                     mouseState.HostForm.PointToClient(New Point(cursorPoint.X, cursorPoint.Y)))
                 End If
             End If
             Return False
@@ -3831,6 +3847,10 @@ Public Class ThisIsYourWindow
                                     If _state.HostForm IsNot Nothing Then _owner.ToggleFullScreen(_state.HostForm)
                                 Case HTMAXBUTTON
                                     If _state.HostForm IsNot Nothing Then
+                                        ' 全屏时窗口已经覆盖显示器，切换到 Maximized 会让无边框
+                                        ' WS_POPUP 被系统按普通最大化重新定位，可能移到屏幕顶部之外。
+                                        ' 最大化在该状态下没有语义，因此保持全屏边界不变。
+                                        If _state.IsFullScreen Then Return
                                         _owner.切换动画样式(_state.HostForm.Handle, True)
                                         _state.HostForm.WindowState = If(_state.HostForm.WindowState = FormWindowState.Maximized,
                                                                          FormWindowState.Normal, FormWindowState.Maximized)
@@ -3973,6 +3993,13 @@ Public Class ThisIsYourWindow
 
                 Case WM_SYSCOMMAND
                     Dim cmd As Integer = CInt(m.WParam.ToInt64() And &HFFF0)
+                    ' 不允许系统命令在全屏标题栏可见期间改变 WindowState。
+                    ' 这与自绘最大化按钮的无操作行为保持一致，并防止外部/键盘
+                    ' 触发 SC_MAXIMIZE 后把无边框全屏窗口移出屏幕顶部。
+                    If _state.IsFullScreen AndAlso (cmd = SC_MAXIMIZE OrElse cmd = SC_RESTORE) Then
+                        m.Result = IntPtr.Zero
+                        Return
+                    End If
                     If cmd = SC_MINIMIZE OrElse cmd = SC_MAXIMIZE OrElse cmd = SC_RESTORE Then
                         _owner.切换动画样式(_state.HostForm.Handle, True)
                     End If

@@ -193,7 +193,6 @@ Partial Class Form1
         ' 
         ModernTextBox1.BackColor = Color.Transparent
         ModernTextBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
-        ModernTextBox1.BackgroundSource = Nothing
         ModernTextBox1.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderColorFocus = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderRadius = 10
@@ -228,6 +227,7 @@ Partial Class Form1
         ThisIsYourWindow1.LayerShadowResizeFullArea = True
         ThisIsYourWindow1.ResizeBorderWidth = 10
         ThisIsYourWindow1.ShadowMode = ThisIsYourWindow.ShadowModeEnum.Layer
+        ThisIsYourWindow1.ShowFullScreenButton = True
         ThisIsYourWindow1.TitleAlign = ThisIsYourWindow.TitleAlignEnum.Center
         ' 
         ' Form1
