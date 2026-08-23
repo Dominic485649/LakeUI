@@ -514,6 +514,8 @@ Public Class AgentRoom
 
     Friend _enableMarkdownForAssistant As Boolean = True
     Private _markdownParser As MarkdownViewerCore.MarkdownParser = Nothing
+    Private _markdownCodeSyntaxHighlighter As ICodeSyntaxHighlighter = Nothing
+    Private _markdownTextBoxSyntaxHighlighter As ModernTextBox.ISyntaxHighlighter = Nothing
     Private _markdownBasePath As String = Nothing
 #End Region
 
@@ -1607,6 +1609,45 @@ Public Class AgentRoom
         End Get
     End Property
 
+    Friend _markdownCodeIndentSize As Integer = MarkdownViewerCore.DefaultMarkdownCodeIndentSize
+    <Category("LakeUI - Markdown"), Description("启用代码语法高亮时每个语法缩进层级使用的空格数"), DefaultValue(4)>
+    Public Property CodeIndentSize As Integer
+        Get
+            Return _markdownCodeIndentSize
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownCodeIndentSize, Math.Max(0, value))
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("Markdown 代码块自定义语法高亮器。Nothing 时按围栏语言使用内置高亮器"), Browsable(False),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property CodeSyntaxHighlighter As ICodeSyntaxHighlighter
+        Get
+            Return _markdownCodeSyntaxHighlighter
+        End Get
+        Set(value As ICodeSyntaxHighlighter)
+            If Not Object.ReferenceEquals(_markdownCodeSyntaxHighlighter, value) Then
+                _markdownCodeSyntaxHighlighter = value
+                InvalidateMarkdownRenderers()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("沿用 ModernTextBox 的自定义语法高亮器接口"), Browsable(False),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property TextBoxSyntaxHighlighter As ModernTextBox.ISyntaxHighlighter
+        Get
+            Return _markdownTextBoxSyntaxHighlighter
+        End Get
+        Set(value As ModernTextBox.ISyntaxHighlighter)
+            If Not Object.ReferenceEquals(_markdownTextBoxSyntaxHighlighter, value) Then
+                _markdownTextBoxSyntaxHighlighter = value
+                InvalidateMarkdownRenderers()
+            End If
+        End Set
+    End Property
+
     Friend _assistantPadding As New Padding(0, 4, 0, 4)
     <Category("LakeUI - Agent"), Description("无气泡助手正文内边距"), DefaultValue(GetType(Padding), "0, 4, 0, 4")>
     Public Property AssistantPadding As Padding
@@ -2433,6 +2474,9 @@ Public Class AgentRoom
         renderer.InlineCodeRadius = _markdownInlineCodeRadius
         renderer.CodeBlockPadding = _markdownCodeBlockPadding
         renderer.CodeFont = _markdownCodeFont
+        renderer.CodeIndentSize = _markdownCodeIndentSize
+        renderer.CodeSyntaxHighlighter = _markdownCodeSyntaxHighlighter
+        renderer.TextBoxSyntaxHighlighter = _markdownTextBoxSyntaxHighlighter
         renderer.BlockSpacing = _markdownBlockSpacing
         renderer.InlineLineSpacing = _markdownInlineLineSpacing
         renderer.TableCellPadding = _markdownTableCellPadding

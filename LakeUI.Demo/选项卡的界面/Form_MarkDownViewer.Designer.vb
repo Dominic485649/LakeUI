@@ -55,7 +55,6 @@ Partial Class Form_MarkDownViewer
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
-        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(823, 691)
         ModernPanel1.TabIndex = 47
         ' 
@@ -74,7 +73,6 @@ Partial Class Form_MarkDownViewer
         MarkDownViewer1.Location = New Point(411, 140)
         MarkDownViewer1.Name = "MarkDownViewer1"
         MarkDownViewer1.Padding = New Padding(20)
-        MarkDownViewer1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         MarkDownViewer1.Size = New Size(392, 531)
         MarkDownViewer1.TabIndex = 37
         ' 
@@ -98,7 +96,6 @@ Partial Class Form_MarkDownViewer
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 10, 13, 10)
-        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernTextBox1.Size = New Size(371, 531)
         ModernTextBox1.TabIndex = 38
         ModernTextBox1.Text = "ModernTextBox1"

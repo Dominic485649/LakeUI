@@ -33,6 +33,7 @@ Public Class MarkdownViewerCore
     Public Shared ReadOnly DefaultMarkdownInlineCodePadding As New Padding(5, 3, 5, 3)
     Public Const DefaultMarkdownInlineCodeRadius As Integer = 3
     Public Shared ReadOnly DefaultMarkdownCodeBlockPadding As New Padding(7, 5, 7, 5)
+    Public Const DefaultMarkdownCodeIndentSize As Integer = 4
     Public Shared ReadOnly DefaultMarkdownLinkColor As Color = Color.FromArgb(86, 156, 214)
     Public Const DefaultMarkdownLinkUnderlineThickness As Integer = 1
     Public Const DefaultMarkdownLinkUnderlineOffset As Integer = 3
@@ -84,6 +85,7 @@ Public Class MarkdownViewerCore
         Strikethrough
         Image
         LineBreak
+        MermaidSequenceDiagram
     End Enum
 
     ''' <summary>块级元素类型。</summary>
@@ -150,6 +152,10 @@ Public Class MarkdownViewerCore
         Public Property Kind As BlockKind
         Public Property Inlines As List(Of MarkdownInline)
         Public Property RawText As String
+        ''' <summary>围栏代码块的语言标识，例如 csharp、json、mermaid。</summary>
+        Public Property Language As String
+        ''' <summary>语言为 mermaid 且内容为时序图时使用专用绘制器。</summary>
+        Public Property IsMermaidSequenceDiagram As Boolean
         Public Property OrderIndex As Integer
         Public Property ListLevel As Integer
         ''' <summary>表格行数据（Kind=Table 时有效）。每个元素是一行的单元格列表。</summary>
@@ -184,7 +190,7 @@ Public Class MarkdownViewerCore
     ''' </summary>
     Public Class MarkdownParser
         Private Shared ReadOnly 标题匹配 As New Regex("^(#{1,6})\s+(.*)", RegexOptions.Compiled)
-        Private Shared ReadOnly 代码块开始 As New Regex("^```\S*\s*$", RegexOptions.Compiled)
+        Private Shared ReadOnly 代码块开始 As New Regex("^```(?<language>[^\s`]*)\s*$", RegexOptions.Compiled Or RegexOptions.IgnoreCase)
         Private Shared ReadOnly 无序列表匹配 As New Regex("^(?<indent>[ \t]*)[\-\*\+]\s+(?<text>.*)", RegexOptions.Compiled)
         Private Shared ReadOnly 有序列表匹配 As New Regex("^(?<indent>[ \t]*)(?<order>\d+)\.\s+(?<text>.*)", RegexOptions.Compiled)
         Private Shared ReadOnly 分隔线匹配 As New Regex("^(\*{3,}|-{3,}|_{3,})$", RegexOptions.Compiled)
@@ -234,7 +240,8 @@ Public Class MarkdownViewerCore
                     Continue While
                 End If
 
-                If 代码块开始.IsMatch(line) Then
+                Dim fenceMatch = 代码块开始.Match(line)
+                If fenceMatch.Success Then
                     currentAlertKind = AlertKind.None
                     listIndentStack.Clear()
                     Dim sb As New StringBuilder()
@@ -245,7 +252,12 @@ Public Class MarkdownViewerCore
                         i += 1
                     End While
                     If i < lines.Length Then i += 1
-                    Dim b As New MarkdownBlock(BlockKind.CodeBlock, sb.ToString())
+                    Dim language = fenceMatch.Groups("language").Value.Trim()
+                    Dim b As New MarkdownBlock(BlockKind.CodeBlock, sb.ToString()) With {
+                        .Language = language,
+                        .IsMermaidSequenceDiagram = language.Equals("mermaid", StringComparison.OrdinalIgnoreCase) AndAlso
+                                                     IsMermaidSequenceDiagramText(sb.ToString())
+                    }
                     blocks.Add(b)
                     Continue While
                 End If
@@ -328,6 +340,16 @@ Public Class MarkdownViewerCore
                 i += 1
             End While
             Return blocks
+        End Function
+
+        Private Shared Function IsMermaidSequenceDiagramText(text As String) As Boolean
+            If String.IsNullOrWhiteSpace(text) Then Return False
+            For Each line In text.Replace(vbCr, "").Split(vbLf)
+                Dim t = line.Trim()
+                If t.Length = 0 OrElse t.StartsWith("%%", StringComparison.Ordinal) Then Continue For
+                Return t.Equals("sequenceDiagram", StringComparison.OrdinalIgnoreCase)
+            Next
+            Return False
         End Function
 
         ''' <summary>尝试将行解析为标题/引用/列表等带内联内容的块，返回 Nothing 表示不匹配。</summary>
@@ -595,6 +617,8 @@ Public Class MarkdownViewerCore
         Public TableRowIndex As Integer
         ''' <summary>表格行内的子行索引（0 = 该逻辑行的第一行，用于换行后的后续行）。</summary>
         Public TableSubLine As Integer
+        Public MermaidMessageIndex As Integer
+        Public MermaidMessageRows As List(Of Integer)
     End Structure
 
     ''' <summary>视觉片段（一个行内渲染单元）。</summary>
@@ -616,6 +640,16 @@ Public Class MarkdownViewerCore
         Public ImageObj As Image
         ''' <summary>片段自身高度（Kind=Image 时为图片渲染高度，0 表示使用行高）。</summary>
         Public FragmentHeight As Integer
+        ''' <summary>仅参与选择/复制，不参与实际绘制。</summary>
+        Public SelectionOnly As Boolean
+    End Structure
+
+    Private Structure MermaidSequenceMessage
+        Public FromName As String
+        Public ToName As String
+        Public Text As String
+        Public IsDashed As Boolean
+        Public IsNote As Boolean
     End Structure
 
     ''' <summary>选中位置。</summary>
@@ -668,6 +702,8 @@ Public Class MarkdownViewerCore
 
     Private _document As New MarkdownDocument()
     Private _parser As New MarkdownParser()
+    Private _codeSyntaxHighlighter As ICodeSyntaxHighlighter = Nothing
+    Private _textBoxSyntaxHighlighter As ModernTextBox.ISyntaxHighlighter = Nothing
     Private _visualLines As New List(Of VisualLine)
     Private _totalContentHeight As Integer = 0
 
@@ -1651,6 +1687,51 @@ Public Class MarkdownViewerCore
         End Set
     End Property
 
+    Private 代码缩进宽度 As Integer = DefaultMarkdownCodeIndentSize
+    <Category("LakeUI - Markdown"), Description("启用代码语法高亮时每个语法缩进层级使用的空格数；不启用高亮时保留原始缩进"), DefaultValue(4), Browsable(True)>
+    Public Property CodeIndentSize As Integer
+        Get
+            Return 代码缩进宽度
+        End Get
+        Set(value As Integer)
+            If 代码缩进宽度 <> Math.Max(0, value) Then
+                代码缩进宽度 = Math.Max(0, value)
+                RebuildLayout()
+                RequestEmbeddedOrSelfRefresh()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("代码块自定义语法高亮器。Nothing 时按围栏语言使用内置高亮器"), Browsable(False),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property CodeSyntaxHighlighter As ICodeSyntaxHighlighter
+        Get
+            Return _codeSyntaxHighlighter
+        End Get
+        Set(value As ICodeSyntaxHighlighter)
+            If Not Object.ReferenceEquals(_codeSyntaxHighlighter, value) Then
+                _codeSyntaxHighlighter = value
+                RebuildLayout()
+                RequestEmbeddedOrSelfRefresh()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("沿用 ModernTextBox 的自定义语法高亮器接口。设置后优先于代码围栏语言的内置高亮器"), Browsable(False),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property TextBoxSyntaxHighlighter As ModernTextBox.ISyntaxHighlighter
+        Get
+            Return _textBoxSyntaxHighlighter
+        End Get
+        Set(value As ModernTextBox.ISyntaxHighlighter)
+            If Not Object.ReferenceEquals(_textBoxSyntaxHighlighter, value) Then
+                _textBoxSyntaxHighlighter = value
+                RebuildLayout()
+                RequestEmbeddedOrSelfRefresh()
+            End If
+        End Set
+    End Property
+
     ''' <summary>流式解析批次数，供性能诊断使用。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property StreamParseCount As Long
@@ -2489,6 +2570,9 @@ Public Class MarkdownViewerCore
         Dim newBlock = newDoc.Blocks(blockIndex)
         If oldBlock Is Nothing OrElse newBlock Is Nothing OrElse
            oldBlock.Kind <> BlockKind.CodeBlock OrElse newBlock.Kind <> BlockKind.CodeBlock Then Return False
+        If oldBlock.IsMermaidSequenceDiagram OrElse newBlock.IsMermaidSequenceDiagram OrElse
+           Not String.Equals(oldBlock.Language, newBlock.Language, StringComparison.OrdinalIgnoreCase) OrElse
+           IsCodeSyntaxEnabled(newBlock) Then Return False
 
         Dim oldText = If(oldBlock.RawText, "")
         Dim newText = If(newBlock.RawText, "")
@@ -2666,6 +2750,8 @@ Public Class MarkdownViewerCore
         If a Is Nothing OrElse b Is Nothing Then Return False
         If a.Kind <> b.Kind OrElse
            Not String.Equals(a.RawText, b.RawText, StringComparison.Ordinal) OrElse
+           Not String.Equals(a.Language, b.Language, StringComparison.OrdinalIgnoreCase) OrElse
+           a.IsMermaidSequenceDiagram <> b.IsMermaidSequenceDiagram OrElse
            a.OrderIndex <> b.OrderIndex OrElse
            a.ListLevel <> b.ListLevel OrElse
            a.HasHeader <> b.HasHeader OrElse
@@ -2863,6 +2949,7 @@ Public Class MarkdownViewerCore
     End Function
 
     Private Function LayoutCodeBlock(bi As Integer, block As MarkdownBlock, areaW As Integer, y As Integer, s As Single) As Integer
+        If block.IsMermaidSequenceDiagram Then Return LayoutMermaidSequenceDiagram(bi, block, areaW, y, s)
         Dim cFont As Font = GetCodeFont()
         Dim codeLines = If(block.RawText, "").Split(vbLf)
         Dim padT As Integer = CInt(代码块内边距.Top * s)
@@ -2871,24 +2958,154 @@ Public Class MarkdownViewerCore
         Dim padR As Integer = CInt(代码块内边距.Right * s)
         Dim fontH As Integer = GetLayoutLineHeight(cFont)
         y += padT
+        Dim highlighter = If(_codeSyntaxHighlighter, CodeSyntaxHighlighterRegistry.GetHighlighter(block.Language))
+        Dim syntaxEnabled As Boolean = _textBoxSyntaxHighlighter IsNot Nothing OrElse highlighter IsNot Nothing
+        Dim previousState As Integer = 0
+        Dim previousIndentLevel As Integer = 0
         For cli As Integer = 0 To codeLines.Length - 1
             Dim cText = codeLines(cli)
+            Dim displayText = cText
+            Dim codeX = padL
+            If syntaxEnabled Then
+                Dim indentation = CodeIndentationAnalyzer.Analyze(block.Language, cText, previousIndentLevel)
+                previousIndentLevel = indentation.NextIndentLevel
+                cText = indentation.Text
+                displayText = cText
+                Dim indentChars = Math.Max(0, indentation.IndentLevel * 代码缩进宽度)
+                If indentChars > 0 Then
+                    codeX += MeasureTextWidthCached(New String(" "c, indentChars), cFont, fontH)
+                End If
+            End If
             Dim lineH As Integer = If(cli < codeLines.Length - 1, fontH + 行内行距, fontH)
-            Dim frag As New VisualFragment With {
-                .InlineIndex = 0, .CharStart = 0, .CharLength = cText.Length,
-                .X = padL, .Width = areaW - padL - padR,
-                .Text = cText, .UseFont = cFont,
-                .ForeColor = 代码块文字颜色, .BackColor = 代码块背景颜色,
-                .Kind = InlineKind.Code, .TableColIndex = -1
-            }
+            Dim fragments As New List(Of VisualFragment)
+            Dim tokens As List(Of CodeSyntaxToken) = Nothing
+            If _textBoxSyntaxHighlighter IsNot Nothing Then
+                Dim result = _textBoxSyntaxHighlighter.HighlightLine(cli, cText, previousState)
+                tokens = ConvertTextBoxSyntaxTokens(result.Tokens)
+                previousState = result.EndState
+            ElseIf highlighter IsNot Nothing Then
+                Dim result = highlighter.HighlightLine(cli, cText, previousState)
+                tokens = result.Tokens
+                previousState = result.EndState
+            End If
+            If tokens Is Nothing OrElse tokens.Count = 0 Then
+                fragments.Add(New VisualFragment With {.InlineIndex = 0, .CharStart = 0, .CharLength = displayText.Length, .X = codeX, .Width = Math.Max(0, areaW - codeX - padR), .Text = displayText, .UseFont = cFont, .ForeColor = 代码块文字颜色, .BackColor = 代码块背景颜色, .Kind = InlineKind.Code, .TableColIndex = -1})
+            Else
+                Dim pos As Integer = 0
+                For Each token In tokens.OrderBy(Function(t) t.StartCol)
+                    Dim startCol = Math.Max(pos, token.StartCol)
+                    Dim endCol = Math.Min(displayText.Length, token.StartCol + token.Length)
+                    If endCol <= startCol Then Continue For
+                    If startCol > pos Then AddCodeFragment(fragments, displayText, pos, startCol - pos, codeX, areaW - codeX - padR, cFont, 代码块文字颜色)
+                    AddCodeFragment(fragments, displayText, startCol, endCol - startCol, codeX, areaW - codeX - padR, cFont, token.ForeColor)
+                    pos = endCol
+                Next
+                If pos < displayText.Length Then AddCodeFragment(fragments, displayText, pos, displayText.Length - pos, codeX, areaW - codeX - padR, cFont, 代码块文字颜色)
+            End If
             _visualLines.Add(New VisualLine With {
                 .BlockIndex = bi, .Y = y, .Height = lineH,
-                .Fragments = New List(Of VisualFragment) From {frag},
+                .Fragments = fragments,
                 .TableRowIndex = -1
             })
             y += lineH
         Next
         Return y + padB
+    End Function
+
+    Private Function IsCodeSyntaxEnabled(block As MarkdownBlock) As Boolean
+        If _textBoxSyntaxHighlighter IsNot Nothing OrElse _codeSyntaxHighlighter IsNot Nothing Then Return True
+        Return block IsNot Nothing AndAlso CodeSyntaxHighlighterRegistry.GetHighlighter(block.Language) IsNot Nothing
+    End Function
+
+    Private Shared Function ConvertTextBoxSyntaxTokens(tokens As List(Of ModernTextBox.SyntaxToken)) As List(Of CodeSyntaxToken)
+        If tokens Is Nothing OrElse tokens.Count = 0 Then Return Nothing
+        Dim result As New List(Of CodeSyntaxToken)(tokens.Count)
+        For Each token In tokens
+            result.Add(New CodeSyntaxToken(token.StartCol, token.Length, token.ForeColor))
+        Next
+        Return result
+    End Function
+
+    Private Sub AddCodeFragment(fragments As List(Of VisualFragment), line As String, startCol As Integer, length As Integer, x As Integer, width As Integer, font As Font, color As Color)
+        If length <= 0 Then Return
+        Dim text = line.Substring(startCol, length)
+        Dim prefix = If(startCol > 0, line.Substring(0, startCol), "")
+        Dim fragX = x + MeasureTextWidthCached(prefix, font, GetLayoutLineHeight(font))
+        fragments.Add(New VisualFragment With {.InlineIndex = 0, .CharStart = startCol, .CharLength = length, .X = fragX, .Width = MeasureTextWidthCached(text, font, GetLayoutLineHeight(font)), .Text = text, .UseFont = font, .ForeColor = color, .BackColor = Color.Empty, .Kind = InlineKind.Code, .TableColIndex = -1})
+    End Sub
+
+    Private Function LayoutMermaidSequenceDiagram(bi As Integer, block As MarkdownBlock, areaW As Integer, y As Integer, s As Single) As Integer
+        Dim cFont = GetCodeFont()
+        Dim lineH = GetLayoutLineHeight(cFont)
+        Dim participants As List(Of String) = Nothing
+        Dim messages As List(Of MermaidSequenceMessage) = ParseMermaidSequence(block.RawText, participants)
+        Dim headerHeight = Math.Max(lineH + CInt(10 * s), CInt(30 * s))
+        Dim participantWidth As Integer = 0
+        Dim stepX As Single = 0
+        Using participantFont = CreateMermaidFont(participants, areaW, s, cFont, participantWidth, stepX)
+            Dim participantMessageGap = Math.Max(6, CInt(8 * s))
+            Dim messageRows = MeasureMermaidMessageRows(messages, participants, areaW, participantWidth, stepX, s, cFont, lineH)
+            Dim messageRowsHeight As Integer = 0
+            For Each rowHeight In messageRows
+                messageRowsHeight += rowHeight
+            Next
+            Dim diagramHeight = headerHeight + participantMessageGap + messageRowsHeight + participantMessageGap + headerHeight + CInt(8 * s)
+            Dim copyFragment As New VisualFragment With {
+                .InlineIndex = 0,
+                .CharStart = 0,
+                .CharLength = If(block.RawText, "").Length,
+                .X = 0,
+                .Width = 0,
+                .Text = If(block.RawText, ""),
+                .UseFont = cFont,
+                .ForeColor = Color.Empty,
+                .BackColor = Color.Empty,
+                .Kind = InlineKind.Code,
+                .TableColIndex = -1,
+                .SelectionOnly = True
+            }
+            _visualLines.Add(New VisualLine With {.BlockIndex = bi, .Y = y, .Height = diagramHeight, .Fragments = New List(Of VisualFragment) From {copyFragment}, .TableRowIndex = -1, .MermaidMessageIndex = -1, .MermaidMessageRows = messageRows})
+            Return y + diagramHeight
+        End Using
+    End Function
+
+    Private Function ParseMermaidSequence(raw As String, ByRef participants As List(Of String)) As List(Of MermaidSequenceMessage)
+        participants = New List(Of String)
+        Dim result As New List(Of MermaidSequenceMessage)
+        Dim aliases As New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+        For Each rawLine In If(raw, "").Replace(vbCr, "").Split(vbLf)
+            Dim line = rawLine.Trim()
+            If line.Length = 0 OrElse line.Equals("sequenceDiagram", StringComparison.OrdinalIgnoreCase) OrElse line.StartsWith("%%", StringComparison.Ordinal) Then Continue For
+            Dim participantMatch = Regex.Match(line, "^(?:participant|actor)\s+(?<id>[^\s]+)(?:\s+as\s+(?<label>.+))?$", RegexOptions.IgnoreCase)
+            If participantMatch.Success Then
+                Dim id = participantMatch.Groups("id").Value.Trim()
+                Dim label = If(participantMatch.Groups("label").Success, participantMatch.Groups("label").Value.Trim(), id)
+                aliases(id) = label
+                If Not participants.Contains(label) Then participants.Add(label)
+                Continue For
+            End If
+            Dim noteMatch = Regex.Match(line, "^Note\s+(?:over|right of|left of)\s+(?<name>[^:]+):\s*(?<text>.*)$", RegexOptions.IgnoreCase)
+            If noteMatch.Success Then
+                Dim name = ResolveMermaidAlias(noteMatch.Groups("name").Value.Trim(), aliases)
+                If Not participants.Contains(name) Then participants.Add(name)
+                result.Add(New MermaidSequenceMessage With {.FromName = name, .ToName = name, .Text = noteMatch.Groups("text").Value.Trim(), .IsNote = True})
+                Continue For
+            End If
+            Dim messageMatch = Regex.Match(line, "^(?<from>[^-:]+?)(?<arrow>-+>>|-+>|-->>|-->)?(?<to>[^:]+?)\s*:\s*(?<text>.*)$")
+            If messageMatch.Success AndAlso messageMatch.Groups("arrow").Success Then
+                Dim fromName = ResolveMermaidAlias(messageMatch.Groups("from").Value.Trim(), aliases)
+                Dim toName = ResolveMermaidAlias(messageMatch.Groups("to").Value.Trim(), aliases)
+                If Not participants.Contains(fromName) Then participants.Add(fromName)
+                If Not participants.Contains(toName) Then participants.Add(toName)
+                result.Add(New MermaidSequenceMessage With {.FromName = fromName, .ToName = toName, .Text = messageMatch.Groups("text").Value.Trim(), .IsDashed = messageMatch.Groups("arrow").Value.StartsWith("--", StringComparison.Ordinal)})
+            End If
+        Next
+        Return result
+    End Function
+
+    Private Shared Function ResolveMermaidAlias(value As String, aliases As Dictionary(Of String, String)) As String
+        Dim resolved As String = Nothing
+        Return If(aliases.TryGetValue(value, resolved), resolved, value)
     End Function
 
     Private Function LayoutTable(bi As Integer, block As MarkdownBlock, areaW As Integer, y As Integer, s As Single) As Integer
@@ -3358,6 +3575,7 @@ Public Class MarkdownViewerCore
         Using context.PushClip(New RectangleF(clipLeft, clipTop, clipW, clipBottom - clipTop))
             Dim selStart, selEnd As SelectionPos
             If _hasSelection Then GetOrderedSelection(selStart, selEnd)
+            Dim lastMermaidBlockIndex As Integer = -1
 
             Dim visibleTop As Integer = Math.Max(0, scrollY + localClipTop - ci.Top)
             For vli As Integer = GetFirstVisibleVisualLine(visibleTop) To _visualLines.Count - 1
@@ -3366,7 +3584,10 @@ Public Class MarkdownViewerCore
                 If drawY + vl.Height < clipTop Then Continue For
                 If drawY > clipBottom Then Exit For
                 Dim block = _document.Blocks(vl.BlockIndex)
-                DrawBlockDecoration_GPU(context, block, vl, vli, CInt(clipLeft), drawY, clipW, s)
+                If Not block.IsMermaidSequenceDiagram OrElse lastMermaidBlockIndex <> vl.BlockIndex Then
+                    DrawBlockDecoration_GPU(context, block, vl, vli, CInt(clipLeft), drawY, clipW, s)
+                    If block.IsMermaidSequenceDiagram Then lastMermaidBlockIndex = vl.BlockIndex
+                End If
                 If Not context.IntersectsDirty(New RectangleF(clipLeft, drawY, clipW, vl.Height)) Then Continue For
                 DrawFragments_GPU(context, vl, vli, CInt(clipLeft), drawY, block.Kind, s, selStart, selEnd)
                 drawnLines += 1
@@ -3411,6 +3632,10 @@ Public Class MarkdownViewerCore
                 context.FillRectangle(New RectangleF(textLeft + CInt(引用条偏移 * s), drawY, Math.Max(1, CInt(引用条宽度 * s)), barH), barColor)
 
             Case BlockKind.CodeBlock
+                If block.IsMermaidSequenceDiagram Then
+                    DrawMermaidSequenceDiagram_GPU(context, block, vl, vli, textLeft, drawY, clipW, s)
+                    Return
+                End If
                 Dim padT As Integer = CInt(代码块内边距.Top * s)
                 Dim padB As Integer = CInt(代码块内边距.Bottom * s)
                 Dim isFirstCodeLine = (vli = 0 OrElse _visualLines(vli - 1).BlockIndex <> vl.BlockIndex)
@@ -3509,6 +3734,8 @@ Public Class MarkdownViewerCore
             Dim fragX As Integer = textLeft + frag.X
             Dim fragW As Integer = frag.Width
 
+            If frag.SelectionOnly Then Continue For
+
             If frag.Kind = InlineKind.Image Then
                 If _hasSelection Then DrawFragmentSelection_GPU(context, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
                 Dim imgH As Integer = If(frag.FragmentHeight > 0, frag.FragmentHeight, vl.Height)
@@ -3600,7 +3827,8 @@ Public Class MarkdownViewerCore
                              color As Color,
                              rect As RectangleF,
                              align As D2DTextAlign,
-                             verticalCenter As Boolean)
+                             verticalCenter As Boolean,
+                             Optional wordWrap As Boolean = False)
         If String.IsNullOrEmpty(text) OrElse font Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
 
         Dim textAlign As Vortice.DirectWrite.TextAlignment
@@ -3610,7 +3838,7 @@ Public Class MarkdownViewerCore
             Case Else : textAlign = Vortice.DirectWrite.TextAlignment.Leading
         End Select
         Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
-        context.DrawText(text, font, color, rect, textAlign, paraAlign)
+        context.DrawText(text, font, color, rect, textAlign, paraAlign, wordWrap)
     End Sub
 
     Private Sub DrawScrollBar_GPU(context As D3D_PaintContext, w As Integer, h As Integer, s As Single)
@@ -4386,6 +4614,187 @@ Public Class MarkdownViewerCore
             Case Else
                 DisposeImageCache()
         End Select
+    End Sub
+
+    Private Sub DrawMermaidSequenceDiagram_GPU(context As D3D_PaintContext,
+                                                block As MarkdownBlock,
+                                                vl As VisualLine,
+                                                vli As Integer,
+                                                left As Integer,
+                                                top As Integer,
+                                                width As Integer,
+                                                scale As Single)
+        Dim participants As List(Of String) = Nothing
+        Dim messages = ParseMermaidSequence(block.RawText, participants)
+        If participants Is Nothing OrElse participants.Count = 0 Then Return
+        Dim baseFont = GetCodeFont()
+        Dim participantWidth As Integer = 0
+        Dim stepX As Single = 0
+        Dim participantFont = CreateMermaidFont(participants, width, scale, baseFont, participantWidth, stepX)
+        Dim messageFont = New Font(baseFont.FontFamily, baseFont.SizeInPoints, baseFont.Style)
+        Using participantFont
+            Using messageFont
+                Dim lineHeight = Math.Max(GetLayoutLineHeight(participantFont), GetLayoutLineHeight(messageFont))
+            Dim diagramTop = top
+            Dim diagramHeight = Math.Max(vl.Height, _blockLayoutBottoms(vl.BlockIndex) - vl.Y)
+            Dim headerHeight = Math.Max(lineHeight + CInt(10 * scale), CInt(30 * scale))
+            Dim bottomTop = diagramTop + diagramHeight - headerHeight
+            Dim participantMessageGap = Math.Max(6, CInt(8 * scale))
+            Dim messageRows = vl.MermaidMessageRows
+            If messageRows Is Nothing OrElse messageRows.Count <> messages.Count Then
+                messageRows = MeasureMermaidMessageRows(messages, participants, width, participantWidth, stepX, scale, messageFont, lineHeight)
+            End If
+            Dim textGap = Math.Max(3, CInt(4 * scale))
+            Dim arrowBand = Math.Max(6, CInt(8 * scale))
+            Dim centers As New Dictionary(Of String, Single)(StringComparer.OrdinalIgnoreCase)
+            Dim labelColor = If(代码块文字颜色 = Color.Empty, 文本颜色, 代码块文字颜色)
+            Dim lineColor = Color.FromArgb(145, labelColor)
+            Dim headerBack = Color.FromArgb(190, 38, 42, 48)
+            For i As Integer = 0 To participants.Count - 1
+                Dim cx = left + If(participants.Count = 1, width / 2.0F, participantWidth / 2.0F + i * stepX)
+                centers(participants(i)) = cx
+                DrawMermaidParticipant_GPU(context, participants(i), cx, diagramTop, participantWidth, headerHeight, participantFont, labelColor, lineColor, headerBack, scale)
+                DrawMermaidParticipant_GPU(context, participants(i), cx, bottomTop, participantWidth, headerHeight, participantFont, labelColor, lineColor, headerBack, scale)
+                DrawDashedLine_GPU(context, New Vector2(cx, diagramTop + headerHeight), New Vector2(cx, bottomTop), lineColor, Math.Max(1.0F, scale), CInt(4 * scale))
+            Next
+            Dim messageTop = diagramTop + headerHeight + participantMessageGap
+            For mi As Integer = 0 To messages.Count - 1
+                Dim msg = messages(mi)
+                Dim rowHeight = messageRows(mi)
+                Dim fromX As Single = centers(msg.FromName)
+                Dim toX As Single = centers(msg.ToName)
+                If msg.IsNote Then
+                    Dim noteWidth = Math.Min(CInt(width * 0.6F), Math.Max(CInt(100 * scale), MeasureTextWidthCached(msg.Text, messageFont, lineHeight) + CInt(16 * scale)))
+                    Dim noteHeight = Math.Max(lineHeight, rowHeight - CInt(8 * scale))
+                    Dim noteRect As New RectangleF(fromX - noteWidth / 2.0F, messageTop + (rowHeight - noteHeight) / 2.0F, noteWidth, noteHeight)
+                    context.FillRectangle(noteRect, Color.FromArgb(110, 107, 99, 36))
+                    context.DrawRectangle(noteRect, lineColor, Math.Max(1.0F, scale))
+                    DrawText_GPU(context, msg.Text, messageFont, labelColor, noteRect, D2DTextAlign.Center, True, True)
+                    messageTop += rowHeight
+                    Continue For
+                End If
+                Dim messageWidth = Math.Max(CInt(20 * scale), CInt(Math.Abs(toX - fromX) - 8 * scale))
+                Dim labelLeft = (fromX + toX) / 2.0F - messageWidth / 2.0F
+                Dim messageHeight = Math.Max(lineHeight, rowHeight - textGap - arrowBand)
+                Dim messageY = messageTop + messageHeight + textGap
+                Dim direction = If(toX >= fromX, 1.0F, -1.0F)
+                If msg.IsDashed Then
+                    DrawDashedLine_GPU(context, New Vector2(fromX, messageY), New Vector2(toX, messageY), lineColor, Math.Max(1.0F, scale), CInt(4 * scale))
+                Else
+                    Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, lineColor, context.DeviceGeneration)
+                    context.DeviceContext.DrawLine(New Vector2(fromX, messageY), New Vector2(toX, messageY), brush, Math.Max(1.0F, scale))
+                End If
+                Dim arrow = Math.Max(3.0F, 5.0F * scale)
+                Dim arrowBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, lineColor, context.DeviceGeneration)
+                context.DeviceContext.DrawLine(New Vector2(toX, messageY), New Vector2(toX - direction * arrow, messageY - arrow), arrowBrush, Math.Max(1.0F, scale))
+                context.DeviceContext.DrawLine(New Vector2(toX, messageY), New Vector2(toX - direction * arrow, messageY + arrow), arrowBrush, Math.Max(1.0F, scale))
+                DrawText_GPU(context, msg.Text, messageFont, labelColor, New RectangleF(labelLeft, messageTop, messageWidth, messageHeight), D2DTextAlign.Center, True, True)
+                messageTop += rowHeight
+            Next
+            End Using
+        End Using
+    End Sub
+
+    Private Function MeasureMermaidMessageRows(messages As List(Of MermaidSequenceMessage),
+                                               participants As List(Of String),
+                                               width As Integer,
+                                               participantWidth As Integer,
+                                               stepX As Single,
+                                               scale As Single,
+                                               font As Font,
+                                               lineHeight As Integer) As List(Of Integer)
+        Dim rows As New List(Of Integer)(If(messages Is Nothing, 0, messages.Count))
+        If messages Is Nothing Then Return rows
+        Dim defaultRow = Math.Max(lineHeight + CInt(8 * scale), CInt(24 * scale))
+        Dim textGap = Math.Max(3, CInt(4 * scale))
+        Dim arrowBand = Math.Max(6, CInt(8 * scale))
+        For Each message In messages
+            Dim availableWidth = GetMermaidMessageWidth(message, participants, width, participantWidth, stepX, scale)
+            Dim wrapped = D3D_TextMeasureHelper.MeasureWrappedText_D2D(message.Text, font, Math.Max(20, availableWidth - CInt(8 * scale)), DpiScale(), GetTextFormatCacheForMeasure())
+            rows.Add(If(message.IsNote,
+                        Math.Max(defaultRow, wrapped.Height + CInt(8 * scale)),
+                        Math.Max(defaultRow, wrapped.Height + textGap + arrowBand)))
+        Next
+        Return rows
+    End Function
+
+    Private Function GetMermaidMessageWidth(message As MermaidSequenceMessage,
+                                             participants As List(Of String),
+                                             width As Integer,
+                                             participantWidth As Integer,
+                                             stepX As Single,
+                                             scale As Single) As Integer
+        If message.IsNote Then Return Math.Max(20, Math.Min(CInt(width * 0.6F), width) - CInt(16 * scale))
+        If participants Is Nothing OrElse participants.Count <= 1 Then Return Math.Max(20, width - CInt(16 * scale))
+        Dim fromIndex = participants.FindIndex(Function(value) String.Equals(value, message.FromName, StringComparison.OrdinalIgnoreCase))
+        Dim toIndex = participants.FindIndex(Function(value) String.Equals(value, message.ToName, StringComparison.OrdinalIgnoreCase))
+        If fromIndex < 0 OrElse toIndex < 0 Then Return Math.Max(20, CInt(Math.Abs(stepX) - 8 * scale))
+        Dim span = Math.Abs(toIndex - fromIndex)
+        If span <= 0 Then Return Math.Max(20, participantWidth - CInt(16 * scale))
+        Return Math.Max(20, CInt(span * Math.Abs(stepX) - 8 * scale))
+    End Function
+
+    Private Sub DrawMermaidParticipant_GPU(context As D3D_PaintContext,
+                                           label As String,
+                                           centerX As Single,
+                                           top As Integer,
+                                           width As Integer,
+                                           height As Integer,
+                                           font As Font,
+                                           labelColor As Color,
+                                           lineColor As Color,
+                                           backColor As Color,
+        scale As Single)
+        Dim rect As New RectangleF(centerX - width / 2.0F, top, width, height)
+        context.FillRectangle(rect, backColor)
+        context.DrawRectangle(rect, lineColor, Math.Max(1.0F, scale))
+        DrawText_GPU(context, label, font, labelColor, rect, D2DTextAlign.Center, True)
+    End Sub
+
+    Private Function CreateMermaidFont(participants As List(Of String),
+                                       width As Integer,
+                                       scale As Single,
+                                       baseFont As Font,
+                                       ByRef participantWidth As Integer,
+                                       ByRef stepX As Single) As Font
+        Dim participantCount = Math.Max(1, participants.Count)
+        Dim factor As Single = 1.0F
+        Do While factor >= 0.2F
+            Dim candidateSize = Math.Max(4.0F, baseFont.SizeInPoints * factor)
+            Using candidate As New Font(baseFont.FontFamily, candidateSize, baseFont.Style)
+                Dim maxParticipantText As Integer = 0
+                For Each participant In participants
+                    maxParticipantText = Math.Max(maxParticipantText, MeasureTextWidthCached(participant, candidate, GetLayoutLineHeight(candidate)))
+                Next
+                Dim gap = Math.Max(CInt(12 * scale), CInt(16 * scale * factor))
+                participantWidth = Math.Max(CInt(76 * scale * factor), maxParticipantText + CInt(18 * scale))
+                Dim totalWidth = participantCount * participantWidth + Math.Max(0, participantCount - 1) * gap
+                Dim distance = If(participantCount = 1, width, CSng(width - participantWidth) / (participantCount - 1))
+                If totalWidth <= width Then
+                    stepX = distance
+                    Return New Font(baseFont.FontFamily, candidateSize, baseFont.Style)
+                End If
+            End Using
+            factor -= 0.05F
+        Loop
+        Dim fallbackGap = Math.Max(8, CInt(12 * scale))
+        participantWidth = Math.Max(12, (width - Math.Max(0, participantCount - 1) * fallbackGap) \ participantCount)
+        stepX = If(participantCount = 1, width, CSng(width - participantWidth) / (participantCount - 1))
+        Return New Font(baseFont.FontFamily, Math.Max(4.0F, baseFont.SizeInPoints * 0.2F), baseFont.Style)
+    End Function
+
+    Private Sub DrawDashedLine_GPU(context As D3D_PaintContext, fromPoint As Vector2, toPoint As Vector2, color As Color, strokeWidth As Single, dashLength As Integer)
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        Dim total = Vector2.Distance(fromPoint, toPoint)
+        If total <= 0 Then Return
+        Dim direction = Vector2.Normalize(toPoint - fromPoint)
+        Dim cursor As Single = 0
+        Dim dash = Math.Max(2, dashLength)
+        While cursor < total
+            Dim segmentEnd = Math.Min(total, cursor + dash)
+            context.DeviceContext.DrawLine(fromPoint + direction * cursor, fromPoint + direction * segmentEnd, brush, strokeWidth)
+            cursor += dash * 2
+        End While
     End Sub
 
     Private Enum D2DTextAlign

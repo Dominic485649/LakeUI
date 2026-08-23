@@ -8,4 +8,7 @@
   <Project Path="LakeUI/LakeUI.vbproj">
     <BuildType Project="Debug" />
   </Project>
+  <Project Path="LakeUI.Tests/LakeUI.Tests.csproj">
+    <BuildType Project="Debug" />
+  </Project>
 </Solution>
