@@ -59,6 +59,7 @@ Public Class AgentRoom
         Friend MarkdownRendererAppliedTextVersion As Integer = -1
         Friend TextVersion As Integer = 0
         Friend LinkSpansVersion As Integer = -1
+        Friend ReadOnly ThinkingTextParser As New AgentThinkingTextParser()
 
         Private _kind As ChatItemKind = ChatItemKind.AssistantMessage
         Private _text As String = ""
@@ -224,6 +225,7 @@ Public Class AgentRoom
                 Dim v = If(value, "")
                 If Text <> v Then
                     _text = v
+                    ThinkingTextParser.Reset()
                     _textBuilder = Nothing
                     _textSnapshotDirty = False
                     BumpTextVersion()
@@ -1958,7 +1960,11 @@ Public Class AgentRoom
 
     Private Function AddItem(kind As ChatItemKind, text As String) As ChatItem
         Dim usesMarkdown = kind = ChatItemKind.AssistantMessage OrElse kind = ChatItemKind.AssistantActivity
-        Dim it As New ChatItem(kind, text, scanLinks:=Not (usesMarkdown AndAlso _enableMarkdownForAssistant))
+        Dim normalizedText = If(text, "")
+        If usesMarkdown AndAlso _enableMarkdownForAssistant Then
+            normalizedText = StripThinkingMarkup(normalizedText)
+        End If
+        Dim it As New ChatItem(kind, normalizedText, scanLinks:=Not (usesMarkdown AndAlso _enableMarkdownForAssistant))
         _items.Add(it)
         Return it
     End Function
@@ -1994,8 +2000,13 @@ Public Class AgentRoom
     Public Sub AppendToItem(item As ChatItem, more As String)
         If item Is Nothing OrElse item.OwnerRoom IsNot Me OrElse String.IsNullOrEmpty(more) Then Return
         If ShouldUseMarkdown(item) Then
-            item.AppendTextInternal(more, rescanLinks:=False, markRelayout:=False)
-            item.QueueMarkdownRendererAppend(more)
+            Dim chunk = item.ThinkingTextParser.Append(more)
+            If String.IsNullOrEmpty(chunk.VisibleText) Then
+                QueueStreamItemLayout(item)
+                Return
+            End If
+            item.AppendTextInternal(chunk.VisibleText, rescanLinks:=False, markRelayout:=False)
+            item.QueueMarkdownRendererAppend(chunk.VisibleText)
             QueueStreamItemLayout(item)
         Else
             item.AppendTextInternal(more, rescanLinks:=True)
@@ -2157,6 +2168,11 @@ Public Class AgentRoom
 
     Private Sub CompleteStreamingItem(it As ChatItem)
         If it Is Nothing OrElse it.OwnerRoom IsNot Me OrElse Not ShouldUseMarkdown(it) Then Return
+        Dim thinkingTail = it.ThinkingTextParser.Complete()
+        If Not String.IsNullOrEmpty(thinkingTail.VisibleText) Then
+            it.AppendTextInternal(thinkingTail.VisibleText, rescanLinks:=False, markRelayout:=False)
+            it.QueueMarkdownRendererAppend(thinkingTail.VisibleText)
+        End If
         SubmitPendingMarkdownRendererAppend(it)
         Dim renderer = it.MarkdownRenderer
         If renderer Is Nothing OrElse renderer.IsDisposed Then
@@ -2357,6 +2373,13 @@ Public Class AgentRoom
         If it Is Nothing Then Return False
         Return (it.Kind = ChatItemKind.AssistantMessage OrElse it.Kind = ChatItemKind.AssistantActivity) AndAlso
                _enableMarkdownForAssistant
+    End Function
+
+    Private Shared Function StripThinkingMarkup(text As String) As String
+        Dim parser As New AgentThinkingTextParser()
+        Dim chunk = parser.Append(text)
+        Dim tail = parser.Complete()
+        Return chunk.VisibleText & tail.VisibleText
     End Function
 
     Private Function GetItemForeColor(it As ChatItem) As Color

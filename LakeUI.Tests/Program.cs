@@ -13,7 +13,27 @@ static class Program
         VerifyRenderedIndentationOffset();
         VerifyMermaidCopyText();
         VerifyCustomHighlighterRegistration();
+        VerifyAgentThinkingTagParsing();
         Console.WriteLine("Markdown code and Mermaid parser tests passed.");
+    }
+
+    private static void VerifyAgentThinkingTagParsing()
+    {
+        var parser = new AgentThinkingTextParser();
+        var visible = new System.Text.StringBuilder();
+        var thinking = new System.Text.StringBuilder();
+        foreach (var part in new[] { "<thi", "nk>first", "</thi", "nk>answer<think>second</think>end" })
+        {
+            var chunk = parser.Append(part);
+            visible.Append(chunk.VisibleText);
+            thinking.Append(chunk.ThinkingText);
+        }
+
+        var tail = parser.Complete();
+        visible.Append(tail.VisibleText);
+        thinking.Append(tail.ThinkingText);
+        Assert(visible.ToString() == "answerend", "Thinking tags must not leak into the visible answer.");
+        Assert(thinking.ToString() == "firstsecond", "Thinking text must remain available for the collapsed activity.");
     }
 
     private static void VerifyFenceParsing()
