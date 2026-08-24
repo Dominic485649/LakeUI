@@ -53,7 +53,7 @@ Public NotInheritable Class CodeIndentationAnalyzer
         Dim nextLevel = level
         If key = "python" OrElse key = "py" OrElse key = "py3" Then
             If IsPythonDedent(text) Then level = Math.Max(0, level - 1)
-            If text.EndsWith(":"c) AndAlso Not text.StartsWith("#", StringComparison.Ordinal) Then nextLevel = level + 1
+            If text.EndsWith(":"c) AndAlso Not text.StartsWith("#"c) Then nextLevel = level + 1
         ElseIf key = "vb" OrElse key = "vbnet" OrElse key = "vb.net" OrElse key = "visualbasic.net" OrElse key = "vb6" OrElse key = "visualbasic6" Then
             If IsVisualBasicDedent(text) Then
                 level = Math.Max(0, level - 1)
@@ -69,6 +69,8 @@ Public NotInheritable Class CodeIndentationAnalyzer
                 level = 0
                 nextLevel = 0
             End If
+        ElseIf key = "xml" OrElse key = "xsd" OrElse key = "xsl" OrElse key = "xslt" OrElse key = "html" OrElse key = "htm" OrElse key = "xhtml" OrElse key = "svg" Then
+            Return AnalyzeMarkupIndentation(text, level, key = "html" OrElse key = "htm")
         Else
             If StartsWithClosingBrace(text) Then level = Math.Max(0, level - 1)
             Dim clean = StripCStyleStringsAndComments(text)
@@ -108,6 +110,25 @@ Public NotInheritable Class CodeIndentationAnalyzer
 
     Private Shared Function IsAssemblyDirective(text As String) As Boolean
         Return Regex.IsMatch(text, "^(section|segment|global|extern|bits|org|align|db|dw|dd|dq)\b", RegexOptions.IgnoreCase)
+    End Function
+
+    Private Shared Function AnalyzeMarkupIndentation(text As String, previousIndentLevel As Integer, html As Boolean) As CodeIndentationResult
+        If text.StartsWith("</", StringComparison.Ordinal) Then previousIndentLevel = Math.Max(0, previousIndentLevel - 1)
+        Dim openings = 0
+        Dim closings = 0
+        For Each match As Match In Regex.Matches(text, "<\s*(?<closing>/)?\s*(?<name>[\p{L}_:][\p{L}\p{Nd}_:.-]*)(?=\s|/?>)[^>]*?(?<self>/)?\s*>")
+            If match.Groups("closing").Success Then
+                closings += 1
+            ElseIf Not match.Groups("self").Success AndAlso Not (html AndAlso IsHtmlVoidElement(match.Groups("name").Value)) Then
+                openings += 1
+            End If
+        Next
+        Dim nextLevel = Math.Max(0, previousIndentLevel + openings - Math.Max(0, closings - If(text.StartsWith("</", StringComparison.Ordinal), 1, 0)))
+        Return New CodeIndentationResult(previousIndentLevel, nextLevel, text)
+    End Function
+
+    Private Shared Function IsHtmlVoidElement(name As String) As Boolean
+        Return Regex.IsMatch(name, "^(area|base|br|col|embed|hr|img|input|link|meta|source|track|wbr)$", RegexOptions.IgnoreCase)
     End Function
 
     Private Shared Function StartsWithClosingBrace(text As String) As Boolean
@@ -160,6 +181,8 @@ Public NotInheritable Class CodeSyntaxHighlighterRegistry
         Register(New VisualBasicHighlighter(False), "vb", "vbnet", "vb.net", "visualbasic.net")
         Register(New VisualBasicHighlighter(True), "vb6", "visualbasic6")
         Register(New PythonHighlighter(), "python", "py", "py3")
+        Register(New JavaHighlighter(), "java", "jav")
+        Register(New MarkupHighlighter(), "xml", "xsd", "xsl", "xslt", "html", "htm", "xhtml", "svg")
         Register(New JsonHighlighter(), "json")
         Register(New AssemblyHighlighter(), "asm", "assembly", "x86asm", "masm", "nasm")
     End Sub
@@ -297,16 +320,24 @@ Public NotInheritable Class CodeSyntaxHighlighterRegistry
         Inherits BasicHighlighter
         Private ReadOnly _language As String
         Private Shared ReadOnly Controls As New HashSet(Of String)(StringComparer.Ordinal) From {"if", "else", "switch", "case", "for", "while", "do", "break", "continue", "try", "catch", "throw", "return"}
-        Private Shared ReadOnly Types As New HashSet(Of String)(StringComparer.Ordinal) From {"void", "bool", "char", "short", "int", "long", "float", "double", "decimal", "string", "object", "size_t"}
-        Private Shared ReadOnly CSharpKeywords As New HashSet(Of String)(StringComparer.Ordinal) From {"class", "namespace", "using", "public", "private", "protected", "internal", "static", "readonly", "const", "new", "async", "await", "interface", "enum", "struct", "this", "base", "null", "true", "false"}
-        Private Shared ReadOnly CppKeywords As New HashSet(Of String)(StringComparer.Ordinal) From {"class", "namespace", "using", "public", "private", "protected", "static", "const", "new", "delete", "template", "typename", "virtual", "nullptr", "true", "false"}
-        Private Shared ReadOnly CKeywords As New HashSet(Of String)(StringComparer.Ordinal) From {"auto", "const", "enum", "extern", "register", "static", "struct", "typedef", "union", "unsigned", "volatile"}
+        Private Shared ReadOnly Types As New HashSet(Of String)(StringComparer.Ordinal) From {"void", "bool", "char", "short", "int", "long", "float", "double", "decimal", "string", "object", "size_t", "wchar_t", "char8_t", "char16_t", "char32_t", "nullptr_t"}
+        Private Shared ReadOnly CSharpKeywords As New HashSet(Of String)(StringComparer.Ordinal) From {
+            "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const", "continue", "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false", "finally", "fixed", "float", "for", "foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long", "namespace", "new", "null", "object", "operator", "out", "override", "params", "private", "protected", "public", "readonly", "ref", "return", "sbyte", "sealed", "short", "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "virtual", "void", "volatile", "while",
+            "add", "allows", "alias", "and", "args", "ascending", "async", "await", "by", "closed", "descending", "dynamic", "equals", "extension", "field", "file", "from", "get", "global", "group", "init", "into", "join", "let", "managed", "nameof", "nint", "not", "notnull", "nuint", "on", "or", "orderby", "partial", "record", "remove", "required", "safe", "scoped", "select", "set", "unmanaged", "value", "var", "when", "where", "with", "yield"
+        }
+        Private Shared ReadOnly CppKeywords As New HashSet(Of String)(StringComparer.Ordinal) From {
+            "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand", "bitor", "bool", "break", "case", "catch", "char", "char8_t", "char16_t", "char32_t", "class", "compl", "concept", "const", "const_cast", "consteval", "constexpr", "constinit", "continue", "co_await", "co_return", "co_yield", "decltype", "default", "delete", "do", "double", "dynamic_cast", "else", "enum", "explicit", "export", "extern", "false", "final", "float", "for", "friend", "goto", "if", "import", "inline", "int", "long", "module", "mutable", "namespace", "new", "noexcept", "not", "not_eq", "nullptr", "operator", "or", "or_eq", "override", "private", "protected", "public", "register", "reinterpret_cast", "requires", "return", "short", "signed", "sizeof", "static", "static_assert", "static_cast", "struct", "switch", "template", "this", "thread_local", "throw", "true", "try", "typedef", "typeid", "typename", "union", "unsigned", "using", "virtual", "void", "volatile", "wchar_t", "while", "xor", "xor_eq"
+        }
+        Private Shared ReadOnly CKeywords As New HashSet(Of String)(StringComparer.Ordinal) From {
+            "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else", "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long", "register", "restrict", "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+            "_Alignas", "_Alignof", "_Atomic", "_BitInt", "_Bool", "_Complex", "_Decimal32", "_Decimal64", "_Decimal128", "_Generic", "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local", "alignas", "alignof", "bool", "constexpr", "false", "nullptr", "static_assert", "thread_local", "true", "typeof", "typeof_unqual"
+        }
         Public Sub New(language As String)
             _language = language
         End Sub
         Public Overrides Function HighlightLine(lineIndex As Integer, lineText As String, previousLineState As Integer) As CodeSyntaxHighlightResult
             Dim trimmed = lineText.TrimStart()
-            If trimmed.StartsWith("#", StringComparison.Ordinal) Then Return New CodeSyntaxHighlightResult(New List(Of CodeSyntaxToken) From {New CodeSyntaxToken(lineText.Length - trimmed.Length, trimmed.Length, DirectiveColor)}, 0)
+            If trimmed.StartsWith("#"c) Then Return New CodeSyntaxHighlightResult(New List(Of CodeSyntaxToken) From {New CodeSyntaxToken(lineText.Length - trimmed.Length, trimmed.Length, DirectiveColor)}, 0)
             Dim keywords = If(_language = "csharp", CSharpKeywords, If(_language = "cpp", CppKeywords, CKeywords))
             Return Scan(lineText, previousLineState, keywords, Controls, Types, "//", "/*", "*/")
         End Function
@@ -315,27 +346,380 @@ Public NotInheritable Class CodeSyntaxHighlighterRegistry
     Private NotInheritable Class VisualBasicHighlighter
         Inherits BasicHighlighter
         Private ReadOnly _vb6 As Boolean
-        Private Shared ReadOnly NetKeywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {"Imports", "Namespace", "Class", "Module", "Sub", "Function", "Property", "Dim", "As", "New", "Inherits", "Implements", "Interface", "Enum", "Structure", "Public", "Private", "Protected", "Friend", "Shared", "ReadOnly", "Nothing", "True", "False"}
+        Private Shared ReadOnly NetKeywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
+            "AddHandler", "AddressOf", "Alias", "And", "AndAlso", "As", "Async", "Await", "ByRef", "ByVal", "Call", "Class", "Const", "Custom", "Declare", "Default", "Delegate", "Dim", "DirectCast", "Each", "EndIf", "Erase", "Error", "Event", "False", "Friend", "Function", "Get", "GetType", "GetXMLNamespace", "Global", "GoSub", "GoTo", "Handles", "Implements", "Imports", "In", "Inherits", "Interface", "Is", "IsNot", "Iterator", "Lib", "Like", "Me", "Mod", "Module", "MustInherit", "MustOverride", "MyBase", "MyClass", "NameOf", "Namespace", "Narrowing", "New", "Not", "Nothing", "NotInheritable", "NotOverridable", "Of", "On", "Operator", "Option", "Optional", "Or", "OrElse", "Out", "Overloads", "Overridable", "Overrides", "ParamArray", "Partial", "Private", "Property", "Protected", "Public", "RaiseEvent", "ReadOnly", "ReDim", "REM", "RemoveHandler", "Resume", "Shadows", "Shared", "Static", "Step", "Stop", "SyncLock", "Then", "To", "True", "TryCast", "TypeOf", "Using", "When", "Widening", "With", "WithEvents", "WriteOnly", "Xor", "Yield"
+        }
         Private Shared ReadOnly Vb6Keywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {"Option", "Explicit", "Private", "Public", "Dim", "Static", "Const", "Sub", "Function", "Property", "Set", "Let", "New", "Nothing", "True", "False", "ByVal", "ByRef"}
         Private Shared ReadOnly Controls As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {"If", "Then", "Else", "ElseIf", "Select", "Case", "For", "Each", "While", "Wend", "Do", "Loop", "Try", "Catch", "Finally", "Throw", "Exit", "Continue", "Next", "End", "Return"}
-        Private Shared ReadOnly Types As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {"String", "Integer", "Long", "Boolean", "Double", "Decimal", "Object", "Date", "Byte", "Short", "Single", "Variant", "Currency"}
+        Private Shared ReadOnly Types As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {"String", "Integer", "Long", "Boolean", "Double", "Decimal", "Object", "Date", "Byte", "SByte", "Short", "UShort", "UInteger", "ULong", "Single", "Char", "Variant", "Currency"}
         Public Sub New(vb6 As Boolean)
             _vb6 = vb6
         End Sub
         Public Overrides Function HighlightLine(lineIndex As Integer, lineText As String, previousLineState As Integer) As CodeSyntaxHighlightResult
             Dim trimmed = lineText.TrimStart()
-            If Not _vb6 AndAlso trimmed.StartsWith("#", StringComparison.Ordinal) Then Return New CodeSyntaxHighlightResult(New List(Of CodeSyntaxToken) From {New CodeSyntaxToken(lineText.Length - trimmed.Length, trimmed.Length, DirectiveColor)}, 0)
+            If Not _vb6 AndAlso trimmed.StartsWith("#"c) Then Return New CodeSyntaxHighlightResult(New List(Of CodeSyntaxToken) From {New CodeSyntaxToken(lineText.Length - trimmed.Length, trimmed.Length, DirectiveColor)}, 0)
             Return Scan(lineText, previousLineState, If(_vb6, Vb6Keywords, NetKeywords), Controls, Types, "'", apostropheString:=False)
         End Function
     End Class
 
     Private NotInheritable Class PythonHighlighter
         Inherits BasicHighlighter
-        Private Shared ReadOnly Keywords As New HashSet(Of String)(StringComparer.Ordinal) From {"def", "class", "import", "from", "as", "return", "lambda", "pass", "raise", "with", "async", "await", "True", "False", "None", "global", "nonlocal"}
-        Private Shared ReadOnly Controls As New HashSet(Of String)(StringComparer.Ordinal) From {"if", "elif", "else", "for", "while", "try", "except", "finally", "break", "continue", "match", "case", "yield"}
+        Private Shared ReadOnly Keywords As New HashSet(Of String)(StringComparer.Ordinal) From {"and", "as", "assert", "async", "await", "class", "def", "del", "from", "global", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "True", "False", "None", "with", "yield", "type"}
+        Private Shared ReadOnly Controls As New HashSet(Of String)(StringComparer.Ordinal) From {"if", "elif", "else", "for", "while", "try", "except", "finally", "break", "continue", "match", "case"}
         Private Shared ReadOnly Types As New HashSet(Of String)(StringComparer.Ordinal) From {"str", "int", "float", "bool", "list", "dict", "set", "tuple", "bytes"}
         Public Overrides Function HighlightLine(lineIndex As Integer, lineText As String, previousLineState As Integer) As CodeSyntaxHighlightResult
             Return Scan(lineText, previousLineState, Keywords, Controls, Types, "#")
+        End Function
+    End Class
+
+    ''' <summary>Java SE 25 词法高亮器。状态 1 为块注释，状态 2 为文本块。</summary>
+    Private NotInheritable Class JavaHighlighter
+        Inherits BasicHighlighter
+
+        ' ReservedKeyword and ContextualKeyword from JLS 3.9 (Java SE 25).
+        Private Shared ReadOnly Keywords As New HashSet(Of String)(StringComparer.Ordinal) From {
+            "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const",
+            "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float",
+            "for", "goto", "if", "implements", "import", "instanceof", "int", "interface", "long", "native",
+            "new", "package", "private", "protected", "public", "return", "short", "static", "strictfp", "super",
+            "switch", "synchronized", "this", "throw", "throws", "transient", "try", "void", "volatile", "while",
+            "_", "exports", "opens", "requires", "uses", "yield", "module", "permits", "sealed", "var",
+            "non-sealed", "provides", "to", "when", "open", "record", "transitive", "with"
+        }
+
+        Private Shared ReadOnly Controls As New HashSet(Of String)(StringComparer.Ordinal) From {
+            "assert", "break", "case", "catch", "continue", "default", "do", "else", "finally", "for", "if",
+            "return", "switch", "throw", "try", "while", "yield"
+        }
+
+        Private Shared ReadOnly Types As New HashSet(Of String)(StringComparer.Ordinal) From {
+            "boolean", "byte", "char", "double", "float", "int", "long", "short", "void",
+            "String", "Object", "Class", "Void", "Integer", "Long", "Short", "Byte", "Boolean",
+            "Character", "Double", "Float", "Number", "Exception", "RuntimeException", "Throwable",
+            "System", "Math", "BigDecimal", "BigInteger", "List", "ArrayList", "Map", "HashMap",
+            "Set", "HashSet", "Collection", "Iterable", "Iterator", "Stream", "Optional"
+        }
+
+        Private Shared ReadOnly NumberPattern As New Regex(
+            "(?:0[xX](?:[0-9a-fA-F](?:_?[0-9a-fA-F])*)(?:\.(?:[0-9a-fA-F](?:_?[0-9a-fA-F])*)?)?(?:[pP][+-]?[0-9](?:_?[0-9])*)?[fFdDlL]?|0[bB][01](?:_?[01])*[lL]?|(?:[0-9](?:_?[0-9])*)(?:\.(?:[0-9](?:_?[0-9])*)?)?(?:[eE][+-]?[0-9](?:_?[0-9])*)?[fFdD]?|\.(?:[0-9](?:_?[0-9])*)(?:[eE][+-]?[0-9](?:_?[0-9])*)?[fFdD]?)(?=$|[^A-Za-z0-9_$])",
+            RegexOptions.Compiled)
+        Private Shared ReadOnly TextBlockDelimiter As New String(ChrW(34), 3)
+
+        Public Overrides Function HighlightLine(lineIndex As Integer, lineText As String, previousLineState As Integer) As CodeSyntaxHighlightResult
+            Dim text = If(lineText, "")
+            Dim tokens As New List(Of CodeSyntaxToken)
+            Dim i = 0
+            Dim state = If(previousLineState = 2, 2, If(previousLineState = 1, 1, 0))
+
+            While i < text.Length
+                If state = 1 Then
+                    Dim ending = text.IndexOf("*/", i, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, CommentColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 1)
+                    End If
+                    Add(tokens, i, ending + 2 - i, CommentColor)
+                    i = ending + 2
+                    state = 0
+                    Continue While
+                End If
+
+                If state = 2 Then
+                    Dim ending = text.IndexOf(TextBlockDelimiter, i, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, StringColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 2)
+                    End If
+                    Add(tokens, i, ending + 3 - i, StringColor)
+                    i = ending + 3
+                    state = 0
+                    Continue While
+                End If
+
+                If i + 1 < text.Length AndAlso text(i) = "/"c AndAlso text(i + 1) = "/"c Then
+                    Add(tokens, i, text.Length - i, CommentColor)
+                    Exit While
+                End If
+                If i + 1 < text.Length AndAlso text(i) = "/"c AndAlso text(i + 1) = "*"c Then
+                    Dim ending = text.IndexOf("*/", i + 2, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, CommentColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 1)
+                    End If
+                    Add(tokens, i, ending + 2 - i, CommentColor)
+                    i = ending + 2
+                    Continue While
+                End If
+
+                If i + 2 < text.Length AndAlso text(i) = ChrW(34) AndAlso text(i + 1) = ChrW(34) AndAlso text(i + 2) = ChrW(34) Then
+                    Dim ending = text.IndexOf(TextBlockDelimiter, i + 3, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, StringColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 2)
+                    End If
+                    Add(tokens, i, ending + 3 - i, StringColor)
+                    i = ending + 3
+                    Continue While
+                End If
+
+                If i + 9 <= text.Length AndAlso text.Substring(i, 9) = "non-sealed" AndAlso
+                   (i = 0 OrElse Not IsJavaIdentifierPart(text(i - 1))) AndAlso
+                   (i + 9 = text.Length OrElse Not IsJavaIdentifierPart(text(i + 9))) Then
+                    Add(tokens, i, 9, KeywordColor)
+                    i += 9
+                    Continue While
+                End If
+
+                If text(i) = """"c OrElse text(i) = "'"c Then
+                    Dim start = i
+                    Dim quote = text(i)
+                    i += 1
+                    While i < text.Length
+                        If text(i) = "\"c AndAlso i + 1 < text.Length Then
+                            i += 2
+                        ElseIf text(i) = quote Then
+                            i += 1
+                            Exit While
+                        Else
+                            i += 1
+                        End If
+                    End While
+                    Add(tokens, start, i - start, StringColor)
+                    Continue While
+                End If
+
+                If (Char.IsDigit(text(i)) OrElse (text(i) = "."c AndAlso i + 1 < text.Length AndAlso Char.IsDigit(text(i + 1)))) AndAlso
+                   (i = 0 OrElse Not IsJavaIdentifierPart(text(i - 1))) Then
+                    Dim number = NumberPattern.Match(text, i)
+                    If number.Success AndAlso number.Index = i Then
+                        Add(tokens, i, number.Length, NumberColor)
+                        i += number.Length
+                        Continue While
+                    End If
+                End If
+
+                If IsJavaIdentifierStart(text(i)) Then
+                    Dim start = i
+                    i += 1
+                    While i < text.Length AndAlso IsJavaIdentifierPart(text(i))
+                        i += 1
+                    End While
+                    Dim word = text.Substring(start, i - start)
+                    If Controls.Contains(word) Then
+                        Add(tokens, start, word.Length, ControlColor)
+                    ElseIf Types.Contains(word) Then
+                        Add(tokens, start, word.Length, TypeColor)
+                    ElseIf Keywords.Contains(word) OrElse word = "true" OrElse word = "false" OrElse word = "null" Then
+                        Add(tokens, start, word.Length, KeywordColor)
+                    End If
+                    Continue While
+                End If
+
+                i += 1
+            End While
+            Return New CodeSyntaxHighlightResult(tokens, state)
+        End Function
+
+        Private Shared Function IsJavaIdentifierStart(value As Char) As Boolean
+            Return Char.IsLetter(value) OrElse value = "_"c OrElse value = "$"c
+        End Function
+
+        Private Shared Function IsJavaIdentifierPart(value As Char) As Boolean
+            Return Char.IsLetterOrDigit(value) OrElse value = "_"c OrElse value = "$"c
+        End Function
+    End Class
+
+    ''' <summary>XML/HTML 基本标记高亮器。状态 1=注释，2=标签，3/4=标签属性引号，5=声明，6=CDATA，7=无引号属性值。</summary>
+    Private NotInheritable Class MarkupHighlighter
+        Inherits BasicHighlighter
+
+        Public Overrides Function HighlightLine(lineIndex As Integer, lineText As String, previousLineState As Integer) As CodeSyntaxHighlightResult
+            Dim text = If(lineText, "")
+            Dim tokens As New List(Of CodeSyntaxToken)
+            Dim i = 0
+            Dim state = Math.Max(0, Math.Min(7, previousLineState))
+
+            While i < text.Length
+                If state = 1 Then
+                    Dim ending = text.IndexOf("-->", i, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, CommentColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 1)
+                    End If
+                    Add(tokens, i, ending + 3 - i, CommentColor)
+                    i = ending + 3
+                    state = 0
+                    Continue While
+                End If
+                If state = 6 Then
+                    Dim ending = text.IndexOf("]]>", i, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, CommentColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 6)
+                    End If
+                    Add(tokens, i, ending + 3 - i, CommentColor)
+                    i = ending + 3
+                    state = 0
+                    Continue While
+                End If
+                If state = 5 Then
+                    Dim ending = text.IndexOf(">"c, i)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, DirectiveColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 5)
+                    End If
+                    Add(tokens, i, ending + 1 - i, DirectiveColor)
+                    i = ending + 1
+                    state = 0
+                    Continue While
+                End If
+                If state = 3 OrElse state = 4 Then
+                    Dim quote = If(state = 3, """"c, "'"c)
+                    Dim ending = text.IndexOf(quote, i)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, StringColor)
+                        Return New CodeSyntaxHighlightResult(tokens, state)
+                    End If
+                    Add(tokens, i, ending + 1 - i, StringColor)
+                    i = ending + 1
+                    state = 2
+                    Continue While
+                End If
+                If state = 7 Then
+                    While i < text.Length AndAlso Char.IsWhiteSpace(text(i))
+                        i += 1
+                    End While
+                    If i >= text.Length Then Return New CodeSyntaxHighlightResult(tokens, 7)
+                    If text(i) = """"c OrElse text(i) = "'"c Then
+                        Add(tokens, i, 1, StringColor)
+                        state = If(text(i) = """"c, 3, 4)
+                        i += 1
+                        Continue While
+                    End If
+                    Dim start = i
+                    While i < text.Length AndAlso Not Char.IsWhiteSpace(text(i)) AndAlso text(i) <> ">"c
+                        i += 1
+                    End While
+                    Add(tokens, start, i - start, StringColor)
+                    state = 2
+                    Continue While
+                End If
+                If state = 2 Then
+                    If Char.IsWhiteSpace(text(i)) Then
+                        i += 1
+                        Continue While
+                    End If
+                    If text(i) = ">"c Then
+                        Add(tokens, i, 1, KeywordColor)
+                        i += 1
+                        state = 0
+                        Continue While
+                    End If
+                    If i + 1 < text.Length AndAlso text(i) = "/"c AndAlso text(i + 1) = ">"c Then
+                        Add(tokens, i, 2, KeywordColor)
+                        i += 2
+                        state = 0
+                        Continue While
+                    End If
+                    If text(i) = "="c Then
+                        Add(tokens, i, 1, KeywordColor)
+                        i += 1
+                        state = 7
+                        Continue While
+                    End If
+                    If text(i) = """"c Then
+                        Add(tokens, i, 1, StringColor)
+                        i += 1
+                        state = 3
+                        Continue While
+                    End If
+                    If text(i) = "'"c Then
+                        Add(tokens, i, 1, StringColor)
+                        i += 1
+                        state = 4
+                        Continue While
+                    End If
+                    If IsMarkupNameChar(text(i)) Then
+                        Dim start = i
+                        i += 1
+                        While i < text.Length AndAlso IsMarkupNameChar(text(i))
+                            i += 1
+                        End While
+                        Add(tokens, start, i - start, KeywordColor)
+                    Else
+                        i += 1
+                    End If
+                    Continue While
+                End If
+
+                If text(i) <> "<"c Then
+                    If text(i) = "&"c Then
+                        Dim ending = text.IndexOf(";"c, i + 1)
+                        If ending >= 0 Then
+                            Add(tokens, i, ending + 1 - i, NumberColor)
+                            i = ending + 1
+                            Continue While
+                        End If
+                    End If
+                    i += 1
+                    Continue While
+                End If
+
+                If i + 1 >= text.Length OrElse Not (IsMarkupNameStart(text(i + 1)) OrElse text(i + 1) = "/"c OrElse text(i + 1) = "!"c OrElse text(i + 1) = "?"c) Then
+                    i += 1
+                    Continue While
+                End If
+
+                If text.IndexOf("<!--", i, StringComparison.Ordinal) = i Then
+                    Dim ending = text.IndexOf("-->", i + 4, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, CommentColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 1)
+                    End If
+                    Add(tokens, i, ending + 3 - i, CommentColor)
+                    i = ending + 3
+                    Continue While
+                End If
+                If text.IndexOf("<![CDATA[", i, StringComparison.Ordinal) = i Then
+                    Dim ending = text.IndexOf("]]>", i + 9, StringComparison.Ordinal)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, CommentColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 6)
+                    End If
+                    Add(tokens, i, ending + 3 - i, CommentColor)
+                    i = ending + 3
+                    Continue While
+                End If
+                If i + 1 < text.Length AndAlso (text(i + 1) = "!"c OrElse text(i + 1) = "?"c) Then
+                    Dim ending = text.IndexOf(">"c, i + 2)
+                    If ending < 0 Then
+                        Add(tokens, i, text.Length - i, DirectiveColor)
+                        Return New CodeSyntaxHighlightResult(tokens, 5)
+                    End If
+                    Add(tokens, i, ending + 1 - i, DirectiveColor)
+                    i = ending + 1
+                    Continue While
+                End If
+
+                Dim openerLength = If(i + 1 < text.Length AndAlso text(i + 1) = "/"c, 2, 1)
+                Add(tokens, i, openerLength, KeywordColor)
+                i += openerLength
+                Dim nameStart = i
+                While i < text.Length AndAlso IsMarkupNameChar(text(i))
+                    i += 1
+                End While
+                If i > nameStart Then Add(tokens, nameStart, i - nameStart, TypeColor)
+                state = 2
+            End While
+            Return New CodeSyntaxHighlightResult(tokens, state)
+        End Function
+
+        Private Shared Function IsMarkupNameStart(value As Char) As Boolean
+            Return Char.IsLetter(value) OrElse value = "_"c OrElse value = ":"c
+        End Function
+
+        Private Shared Function IsMarkupNameChar(value As Char) As Boolean
+            Return IsMarkupNameStart(value) OrElse Char.IsDigit(value) OrElse value = "-"c OrElse value = "."c
         End Function
     End Class
 
