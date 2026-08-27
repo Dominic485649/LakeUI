@@ -194,6 +194,7 @@ Public Module ExOverlayMsgBoxModule
         If 有拥有者 Then
             ownerCtrl = DirectCast(owner, Control)
             遮罩范围 = ownerCtrl.RectangleToScreen(ownerCtrl.ClientRectangle)
+            遮罩范围 = ExOverlayMsgBoxTextMetrics.ResolveSafeLayoutArea(遮罩范围, owner, ownerCtrl, 1, 1)
         Else
             ownerCtrl = Nothing
             遮罩范围 = SystemInformation.VirtualScreen
@@ -282,21 +283,158 @@ End Module
 Friend Module ExOverlayMsgBoxTextMetrics
 
     Private Const 按钮水平留白 As Single = 24.0F
+    Private Const 文本测量最大边长 As Integer = 100000
     Private ReadOnly 对话框文本标志 As TextFormatFlags =
         TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding
     Private ReadOnly 按钮文本标志 As TextFormatFlags =
         TextFormatFlags.SingleLine Or TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding
 
     Friend Function MeasureDialogText(owner As Control, text As String, font As Font, proposedSize As Size, dpiScale As Single) As Size
-        Dim safeSize As New Size(Math.Max(1, proposedSize.Width), Math.Max(1, proposedSize.Height))
-        Return TextRenderer.MeasureText(If(text, ""), font, safeSize, 对话框文本标志)
+        Return MeasureTextSafe(owner, text, font, proposedSize, 对话框文本标志, dpiScale)
     End Function
 
     Friend Function MeasureButtonWidth(owner As Control, text As String, font As Font, minimumWidth As Integer, dpiScale As Single) As Integer
         Dim displayText = GetModernButtonDisplayText(If(text, ""))
-        Dim textSize = TextRenderer.MeasureText(displayText, font, New Size(Integer.MaxValue, Integer.MaxValue), 按钮文本标志)
+        Dim textSize = MeasureTextSafe(owner, displayText, font, New Size(Integer.MaxValue, Integer.MaxValue), 按钮文本标志, dpiScale)
         Dim measuredWidth = CInt(Math.Ceiling(textSize.Width + 按钮水平留白 * dpiScale))
         Return Math.Max(minimumWidth, measuredWidth)
+    End Function
+
+    Friend Function MeasureLineHeight(font As Font, dpiScale As Single) As Integer
+        If font Is Nothing Then Return Math.Max(1, CInt(Math.Ceiling(16.0F * SafeDpiScale(dpiScale))))
+        Try
+            Return Math.Max(1, CInt(Math.Ceiling(D3D_D2DInterop.GetDWriteLineHeightPx(font, SafeDpiScale(dpiScale)))))
+        Catch
+        End Try
+
+        Try
+            Dim measured = TextRenderer.MeasureText("Ag", font, New Size(文本测量最大边长, 文本测量最大边长),
+                                                    TextFormatFlags.SingleLine Or TextFormatFlags.NoPadding)
+            If measured.Height > 0 Then Return measured.Height
+        Catch
+        End Try
+
+        Return Math.Max(1, CInt(Math.Ceiling(font.GetHeight() * SafeDpiScale(dpiScale))))
+    End Function
+
+    Friend Function ResolveSafeLayoutArea(preferredArea As Rectangle,
+                                          owner As IWin32Window,
+                                          fallbackControl As Control,
+                                          minimumWidth As Integer,
+                                          minimumHeight As Integer) As Rectangle
+        minimumWidth = Math.Max(1, minimumWidth)
+        minimumHeight = Math.Max(1, minimumHeight)
+        If IsUsableArea(preferredArea, minimumWidth, minimumHeight) Then Return preferredArea
+
+        Dim ownerBounds As Rectangle
+        If MessageDialogRendering.TryGetWindowBounds(owner, ownerBounds) AndAlso
+           IsUsableArea(ownerBounds, minimumWidth, minimumHeight) Then
+            Return ownerBounds
+        End If
+
+        Dim probe As Rectangle = If(Not preferredArea.IsEmpty, preferredArea, ownerBounds)
+        Try
+            Dim screenArea = Screen.FromRectangle(probe).WorkingArea
+            If IsUsableArea(screenArea, minimumWidth, minimumHeight) Then Return screenArea
+        Catch
+        End Try
+
+        Try
+            If fallbackControl IsNot Nothing Then
+                Dim screenArea = Screen.FromControl(fallbackControl).WorkingArea
+                If IsUsableArea(screenArea, minimumWidth, minimumHeight) Then Return screenArea
+            End If
+        Catch
+        End Try
+
+        Dim virtualArea = SystemInformation.VirtualScreen
+        If IsUsableArea(virtualArea, 1, minimumHeight) Then Return virtualArea
+        Return New Rectangle(0, 0, Math.Max(minimumWidth, preferredArea.Width), Math.Max(minimumHeight, preferredArea.Height))
+    End Function
+
+    Friend Function GetSafeMaxDialogHeight(area As Rectangle, minimumCardHeight As Integer) As Integer
+        minimumCardHeight = Math.Max(1, minimumCardHeight)
+        Dim areaHeight = area.Height
+        If areaHeight <= 0 Then
+            Try
+                areaHeight = Screen.PrimaryScreen.WorkingArea.Height
+            Catch
+            End Try
+        End If
+        If areaHeight <= 0 Then areaHeight = minimumCardHeight
+
+        Dim maxHeight = CInt(Math.Floor(areaHeight * 0.8R))
+        Return Math.Max(minimumCardHeight, maxHeight)
+    End Function
+
+    Private Function MeasureTextSafe(owner As Control, text As String, font As Font, proposedSize As Size, flags As TextFormatFlags, dpiScale As Single) As Size
+        Dim value = If(text, "")
+        If String.IsNullOrEmpty(value) OrElse font Is Nothing Then Return Size.Empty
+
+        Dim safeSize = NormalizeProposedSize(proposedSize)
+        Try
+            Dim measured = D3D_TextInterop.MeasureText(value, font, safeSize, flags, SafeDpiScale(dpiScale))
+            If IsUsableTextSize(value, font, measured, dpiScale) Then Return measured
+        Catch
+        End Try
+
+        Try
+            Dim measured = TextRenderer.MeasureText(value, font, safeSize, flags)
+            If IsUsableTextSize(value, font, measured, dpiScale) Then Return measured
+        Catch
+        End Try
+
+        Return EstimateTextSize(value, font, safeSize, flags, dpiScale)
+    End Function
+
+    Private Function NormalizeProposedSize(size As Size) As Size
+        Return New Size(NormalizeMeasureExtent(size.Width), NormalizeMeasureExtent(size.Height))
+    End Function
+
+    Private Function NormalizeMeasureExtent(value As Integer) As Integer
+        If value <= 0 Then Return 1
+        If value > 文本测量最大边长 Then Return 文本测量最大边长
+        Return value
+    End Function
+
+    Private Function IsUsableTextSize(text As String, font As Font, size As Size, dpiScale As Single) As Boolean
+        If size.Width < 0 OrElse size.Height < 0 Then Return False
+        If String.IsNullOrEmpty(text) Then Return True
+        Return size.Height >= Math.Max(1, MeasureLineHeight(font, dpiScale) \ 2)
+    End Function
+
+    Private Function EstimateTextSize(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags, dpiScale As Single) As Size
+        Dim lineHeight = MeasureLineHeight(font, dpiScale)
+        Dim maxWidth = Math.Max(1, proposedSize.Width)
+        Dim maxLineChars = Math.Max(1, CInt(Math.Floor(maxWidth / EstimateAverageCharWidth(font, dpiScale))))
+        Dim totalLines As Integer = 0
+        Dim widest As Integer = 0
+        Dim normalized = text.Replace(vbCrLf, vbLf).Replace(vbCr, vbLf)
+
+        For Each line In normalized.Split(ControlChars.Lf)
+            Dim lineLength = Math.Max(1, line.Length)
+            Dim lineCount = If((flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak,
+                               Math.Max(1, CInt(Math.Ceiling(lineLength / CDbl(maxLineChars)))),
+                               1)
+            totalLines += lineCount
+            widest = Math.Max(widest, Math.Min(maxWidth, CInt(Math.Ceiling(lineLength * EstimateAverageCharWidth(font, dpiScale)))))
+        Next
+
+        Return New Size(Math.Max(1, widest), Math.Max(lineHeight, totalLines * lineHeight))
+    End Function
+
+    Private Function EstimateAverageCharWidth(font As Font, dpiScale As Single) As Double
+        If font Is Nothing Then Return Math.Max(1.0R, 7.0R * SafeDpiScale(dpiScale))
+        Return Math.Max(1.0R, font.SizeInPoints * SafeDpiScale(dpiScale) * 0.7R)
+    End Function
+
+    Private Function SafeDpiScale(dpiScale As Single) As Single
+        If Single.IsNaN(dpiScale) OrElse Single.IsInfinity(dpiScale) OrElse dpiScale <= 0.0F Then Return 1.0F
+        Return Math.Max(0.01F, dpiScale)
+    End Function
+
+    Private Function IsUsableArea(area As Rectangle, minimumWidth As Integer, minimumHeight As Integer) As Boolean
+        Return area.Width >= minimumWidth AndAlso area.Height >= minimumHeight
     End Function
 
     Private Function GetModernButtonDisplayText(text As String) As String
@@ -406,6 +544,7 @@ Friend Class ExOverlayBackdropForm
         End If
 
         Dim 新范围 = 跟踪目标.RectangleToScreen(跟踪目标.ClientRectangle)
+        新范围 = ExOverlayMsgBoxTextMetrics.ResolveSafeLayoutArea(新范围, 跟踪目标, 跟踪目标, 1, 1)
         If Me.Bounds = 新范围 Then Return
         Me.Bounds = 新范围
         RaiseEvent BoundsUpdated(Me, EventArgs.Empty)
@@ -756,6 +895,8 @@ Friend Class ExOverlayMsgBoxHostForm
         Else
             遮罩范围 = SystemInformation.VirtualScreen
         End If
+        遮罩范围 = ExOverlayMsgBoxTextMetrics.ResolveSafeLayoutArea(
+            遮罩范围, 拥有者, Me, 卡片最小宽度, 获取最小卡片高度(ExOverlayMsgBoxTextMetrics.MeasureLineHeight(标题字体, SC)))
         Bounds = 遮罩范围
     End Sub
 
@@ -869,7 +1010,10 @@ Friend Class ExOverlayMsgBoxHostForm
         messageSize = ExOverlayMsgBoxTextMetrics.MeasureDialogText(Me, 消息文本, 消息字体, New Size(actualTextWidth, Integer.MaxValue), SC)
         Dim messageHeight = Math.Max(最小内容高, Math.Max(messageSize.Height, If(hasIcon, 图标尺寸, 0)))
         Dim cardHeight = 卡片内边距 + titleSize.Height + 标题下间距 + messageHeight + 卡片内边距 + 按钮区高度
-        cardHeight = Math.Min(cardHeight, CInt(ClientSize.Height * 0.8))
+        Dim minCardHeight = 获取最小卡片高度(titleSize.Height)
+        Dim maxCardHeight = ExOverlayMsgBoxTextMetrics.GetSafeMaxDialogHeight(New Rectangle(Point.Empty, ClientSize), minCardHeight)
+        cardHeight = Math.Min(Math.Max(cardHeight, minCardHeight), maxCardHeight)
+        messageHeight = Math.Max(最小内容高, cardHeight - 卡片内边距 - titleSize.Height - 标题下间距 - 卡片内边距 - 按钮区高度)
 
         卡片区域 = New Rectangle((ClientSize.Width - cardWidth) \ 2, (ClientSize.Height - cardHeight) \ 2, cardWidth, cardHeight)
         标题区域 = New Rectangle(卡片区域.X + 卡片内边距, 卡片区域.Y + 卡片内边距, cardWidth - 卡片内边距 * 2, titleSize.Height)
@@ -890,6 +1034,11 @@ Friend Class ExOverlayMsgBoxHostForm
             btnX += btn.Width + 按钮间距
         Next
     End Sub
+
+    Private Function 获取最小卡片高度(titleHeight As Integer) As Integer
+        Return 卡片内边距 + Math.Max(ExOverlayMsgBoxTextMetrics.MeasureLineHeight(标题字体, SC), titleHeight) +
+               标题下间距 + 最小内容高 + 卡片内边距 + 按钮区高度
+    End Function
 
 #End Region
 
@@ -1333,6 +1482,7 @@ Friend Class ExOverlayMsgBoxForm
     End Sub
 
     Private Sub 完成初始化()
+        居中区域 = 获取安全居中区域(ExOverlayMsgBoxTextMetrics.MeasureLineHeight(标题字体, SC))
         计算布局()
         If 默认按钮序号 >= 0 AndAlso 默认按钮序号 < 操作按钮.Count Then
             Me.ActiveControl = 操作按钮(默认按钮序号)
@@ -1515,6 +1665,7 @@ Friend Class ExOverlayMsgBoxForm
         Dim 标题尺寸 = ExOverlayMsgBoxTextMetrics.MeasureDialogText(
             Me, 标题标签.Text, 标题字体,
             New Size(最大文本宽, Integer.MaxValue), SC)
+        居中区域 = 获取安全居中区域(标题尺寸.Height)
 
         ' 测量消息
         Dim 文本尺寸 = ExOverlayMsgBoxTextMetrics.MeasureDialogText(
@@ -1541,8 +1692,10 @@ Friend Class ExOverlayMsgBoxForm
         Dim 卡片高度 As Integer = 卡片内边距 + 标题尺寸.Height + 标题下间距 + 消息高度 + 卡片内边距 + 按钮区高度
 
         ' 限制最大高度
-        Dim 最大高度 As Integer = CInt(居中区域.Height * 0.8)
-        卡片高度 = Math.Min(卡片高度, 最大高度)
+        Dim 最小卡片高度 = 获取最小卡片高度(标题尺寸.Height)
+        Dim 最大高度 As Integer = ExOverlayMsgBoxTextMetrics.GetSafeMaxDialogHeight(居中区域, 最小卡片高度)
+        卡片高度 = Math.Min(Math.Max(卡片高度, 最小卡片高度), 最大高度)
+        消息高度 = Math.Max(最小内容高, 卡片高度 - 卡片内边距 - 标题尺寸.Height - 标题下间距 - 卡片内边距 - 按钮区高度)
 
         ' 窗体大小 = 卡片大小
         Me.ClientSize = New Size(卡片宽度, 卡片高度)
@@ -1589,6 +1742,16 @@ Friend Class ExOverlayMsgBoxForm
             btnX += btn.Width + 按钮间距
         Next
     End Sub
+
+    Private Function 获取安全居中区域(titleHeight As Integer) As Rectangle
+        Return ExOverlayMsgBoxTextMetrics.ResolveSafeLayoutArea(
+            居中区域, 拥有者控件, Me, 卡片最小宽度, 获取最小卡片高度(titleHeight))
+    End Function
+
+    Private Function 获取最小卡片高度(titleHeight As Integer) As Integer
+        Return 卡片内边距 + Math.Max(ExOverlayMsgBoxTextMetrics.MeasureLineHeight(标题字体, SC), titleHeight) +
+               标题下间距 + 最小内容高 + 卡片内边距 + 按钮区高度
+    End Function
 
 #End Region
 
@@ -1749,6 +1912,7 @@ Friend Class ExOverlayMsgBoxForm
     Private Sub 遮罩范围变化(sender As Object, e As EventArgs)
         If 遮罩窗体 Is Nothing Then Return
         居中区域 = 遮罩窗体.Bounds
+        计算布局()
         Me.Location = New Point(
             居中区域.Left + (居中区域.Width - Me.Width) \ 2,
             居中区域.Top + (居中区域.Height - Me.Height) \ 2)
