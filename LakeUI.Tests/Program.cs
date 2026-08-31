@@ -28,6 +28,12 @@ static class Program
         VerifyVisibleControlSurfaceProtection();
         VerifyGlobalBudgetProperties();
         VerifyCleanupRecoveryTargets();
+        VerifyCleanupRecoveryIncludesRegisteredSurface();
+        VerifyGeometryInvalidatesBackdropConsumers();
+        VerifyFullCleanupResumesVisibleControlRendering();
+        VerifyFullCleanupKeepsSharedD2DFactoryAlive();
+        VerifyBackdropImageSnapshotSurvivesCallerDispose();
+        VerifyHdrImageMappingUsesCachedLookup();
         VerifyV5ProbeApi();
         Console.WriteLine("LakeUI tests passed.");
     }
@@ -214,6 +220,67 @@ static class Program
         D3D_PaintBridge.V5ProbeEnabled = false;
     }
 
+    private static void VerifyBackdropImageSnapshotSurvivesCallerDispose()
+    {
+        var textureCache = new D3D_TextureCache();
+        var imageCache = new D3D_ImageCache(textureCache);
+        var renderer = new D3D_BackdropRenderer(imageCache, D3D_RenderCore.DeviceManager);
+        var source = new Bitmap(7, 5);
+        try
+        {
+            using (var graphics = Graphics.FromImage(source))
+                graphics.Clear(Color.FromArgb(255, 40, 80, 120));
+
+            renderer.SetImage(source);
+            source.Dispose();
+
+            var imageField = renderer.GetType().GetField("_image", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var snapshot = (Image?)imageField.GetValue(renderer);
+            Assert(snapshot is not null && snapshot.Width == 7 && snapshot.Height == 5,
+                "Backdrop renderer must retain a stable image snapshot after the caller disposes its source.");
+
+            renderer.SetImage(null);
+            Assert((D3D_BackdropMode)renderer.GetType().GetProperty("Mode")!.GetValue(renderer)! == D3D_BackdropMode.None,
+                "Clearing a backdrop image must release the snapshot and return to None mode.");
+        }
+        finally
+        {
+            renderer.Dispose();
+            imageCache.Dispose();
+            textureCache.Dispose();
+            try { source.Dispose(); } catch { }
+        }
+    }
+
+    private static void VerifyHdrImageMappingUsesCachedLookup()
+    {
+        var options = GlobalOptions.HDR;
+        var previousEnabled = options.Enabled;
+        var previousImages = options.MapImages;
+        try
+        {
+            options.MapImages = true;
+            options.Enabled = true;
+            using var bitmap = new Bitmap(32, 32, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.Clear(Color.FromArgb(255, 128, 160, 192));
+            D3D_HdrOutput.MapBitmapForImageUpload(bitmap);
+            var red = D3D_HdrOutput.MapColor4(Color.FromArgb(255, 255, 0, 0));
+            var green = D3D_HdrOutput.MapColor4(Color.FromArgb(255, 0, 255, 0));
+            var blue = D3D_HdrOutput.MapColor4(Color.FromArgb(255, 0, 0, 255));
+            Assert(red.R > red.G && red.R > red.B && green.G > green.R && green.G > green.B &&
+                   blue.B > blue.R && blue.B > blue.G,
+                "HDR RGB cache keys must preserve independent red, green, and blue channels.");
+            Assert(bitmap.GetPixel(0, 0).A == 255,
+                "HDR image mapping must preserve opaque alpha while using the cached lookup path.");
+        }
+        finally
+        {
+            options.Enabled = previousEnabled;
+            options.MapImages = previousImages;
+        }
+    }
+
     private static void VerifyTabListTransparentBackgroundFallback()
     {
         using var tabList = new ModernTabListControl
@@ -290,6 +357,10 @@ static class Program
         panel.Controls.Add(button);
         otherForm.Controls.Add(otherButton);
 
+        form.Show();
+        otherForm.Show();
+        Application.DoEvents();
+
         _ = form.Handle;
         _ = panel.Handle;
         _ = button.Handle;
@@ -309,6 +380,101 @@ static class Program
         var targets = (Control[])getTargets.Invoke(null, new object[] { form })!;
         Assert(targets.Length == 2 && ReferenceEquals(targets[0], panel) && ReferenceEquals(targets[1], button),
             "Full cleanup recovery must include only the target form's V5 presenters in outer-to-inner order.");
+        form.Hide();
+        otherForm.Hide();
+    }
+
+    private static void VerifyFullCleanupResumesVisibleControlRendering()
+    {
+        using var form = new Form();
+        using var panel = new ModernPanel { Dock = DockStyle.Fill };
+        form.Controls.Add(panel);
+        form.Show();
+        Application.DoEvents();
+
+        D3D_PaintBridge.ResetV5Probe();
+        D3D_PaintBridge.V5ProbeEnabled = true;
+        panel.Invalidate();
+        Application.DoEvents();
+        var before = D3D_PaintBridge.GetV5ProbeSnapshot();
+        Assert(before.SubmittedFrames > 0, "Probe control must submit a frame before full cleanup.");
+
+        D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, form);
+        for (var i = 0; i < 8; i++) Application.DoEvents();
+        var after = D3D_PaintBridge.GetV5ProbeSnapshot();
+        Assert(after.SubmittedFrames > before.SubmittedFrames,
+            "A visible V5 control must resume frame submission after full cleanup.");
+        D3D_PaintBridge.V5ProbeEnabled = false;
+        form.Hide();
+    }
+
+    private static void VerifyCleanupRecoveryIncludesRegisteredSurface()
+    {
+        using var form = new Form();
+        using var panel = new ModernPanel();
+        form.Controls.Add(panel);
+        form.Show();
+        Application.DoEvents();
+        _ = form.Handle;
+        _ = panel.Handle;
+
+        var assembly = typeof(MarkdownViewerCore).Assembly;
+        var registry = assembly.GetType("LakeUI.D3D_ControlSurfaceRegistry")!;
+        registry.GetMethod("获取或创建项目", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { panel });
+        var presentation = assembly.GetType("LakeUI.D3D_V5Presentation")!;
+        var getTargets = presentation.GetMethod("获取清理恢复目标", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var targets = (Control[])getTargets.Invoke(null, new object[] { form })!;
+        Assert(targets.Any(target => ReferenceEquals(target, panel)),
+            "Cleanup recovery must include registered visible V5 surfaces even without a presenter entry.");
+        form.Hide();
+    }
+
+    private static void VerifyGeometryInvalidatesBackdropConsumers()
+    {
+        using var form = new Form();
+        using var source = new ModernPanel();
+        using var consumer = new ModernButton();
+        form.Controls.Add(source);
+        form.Controls.Add(consumer);
+        _ = form.Handle;
+        _ = source.Handle;
+        _ = consumer.Handle;
+
+        var registry = typeof(MarkdownViewerCore).Assembly.GetType("LakeUI.D3D_ControlSurfaceRegistry")!;
+        var ensureEntry = registry.GetMethod("获取或创建项目", BindingFlags.Static | BindingFlags.NonPublic)!;
+        ensureEntry.Invoke(null, new object[] { source });
+        var consumerEntry = ensureEntry.Invoke(null, new object[] { consumer })!;
+        var dirty = consumerEntry.GetType().GetField("Dirty", BindingFlags.Instance | BindingFlags.Public)!;
+        var pendingDirty = consumerEntry.GetType().GetField("PendingDirty", BindingFlags.Instance | BindingFlags.Public)!;
+        dirty.SetValue(consumerEntry, false);
+        pendingDirty.SetValue(consumerEntry, Rectangle.Empty);
+
+        var register = registry.GetMethod("注册依赖", BindingFlags.Static | BindingFlags.NonPublic)!;
+        register.Invoke(null, new object[] { consumer, source, RectangleF.Empty });
+        var geometryChanged = registry.GetMethod("控件几何已变化", BindingFlags.Static | BindingFlags.NonPublic)!;
+        geometryChanged.Invoke(null, new object[] { source, EventArgs.Empty });
+        Assert((bool)dirty.GetValue(consumerEntry)!,
+            "A source geometry change must invalidate backdrop consumers.");
+    }
+
+    private static void VerifyFullCleanupKeepsSharedD2DFactoryAlive()
+    {
+        using var form = new Form();
+        using var panel = new ModernPanel { Dock = DockStyle.Fill };
+        form.Controls.Add(panel);
+        form.Show();
+        Application.DoEvents();
+
+        var interop = typeof(MarkdownViewerCore).Assembly.GetType("LakeUI.D3D_D2DInterop")!;
+        var factoryField = interop.GetField("_d2dFactory", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var before = factoryField.GetValue(null);
+        Assert(before is not null, "V5 rendering must initialize the shared D2D factory.");
+
+        D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, form);
+        Application.DoEvents();
+        Assert(factoryField.GetValue(null) is not null,
+            "Full cache cleanup must keep the shared D2D factory alive while the device remains active.");
+        form.Hide();
     }
 
     private static void VerifyRenderCacheBudgetCoordinator()

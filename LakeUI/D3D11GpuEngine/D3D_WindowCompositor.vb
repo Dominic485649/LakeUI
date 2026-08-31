@@ -245,7 +245,8 @@ Public NotInheritable Class D3D_WindowCompositor
         _paintTargets.Add(entry)
         TrimIdlePaintTargets(superSampled)
         If superSampled Then RestartSsaaIdleTimer()
-        If Not _deviceContextInUse Then D3D_GpuCache.TrimToBudget()
+        ' 归还池化 target 不属于新资源分配；不要在每帧归还时扫描全部 GPU owner。
+        ' 下一次实际分配或显式清理会执行预算维护。
     End Sub
 
     Friend Sub DiscardGpuPaintTarget(target As ID2D1Bitmap1, rentedWidth As Integer, rentedHeight As Integer, superSampled As Boolean)
@@ -376,8 +377,8 @@ Public NotInheritable Class D3D_WindowCompositor
         If Object.ReferenceEquals(context, _deviceContext) Then
             Try : _deviceContext.Target = Nothing : Catch : End Try
             _deviceContextInUse = False
-            ' Rent 阶段的 target 仍在使用，只有上下文归还后才真正具备淘汰条件。
-            D3D_GpuCache.TrimToBudget()
+            ' V3 约束：上下文归还只结束使用范围，不触发进程级 LRU 扫描。
+            ' 资源分配和显式清理入口会在安全边界执行预算维护。
         End If
     End Sub
 

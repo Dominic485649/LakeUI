@@ -60,7 +60,8 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         ' 失效事件提交 V5 帧之后仍可能收到 WM_PAINT。
         ' 保留持久表面，避免在绘制回调中重复构建同一帧。
         If Not 渲染项目(control, 项目, renderable, 绘制后处理) Then Return Nothing
-        D3D_GpuCache.TrimToBudget(项目.Surface)
+        ' 表面提交属于动画热路径。预算维护由资源新增和显式清理入口负责，
+        ' 这里不能同步扫描所有 GPU owner，否则多个控件动画会周期性停顿。
         Return 项目.Surface
     End Function
 
@@ -519,8 +520,36 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Sub
 
     Private Shared Sub 控件几何已变化(发送者 As Object, 事件参数 As EventArgs)
-        MarkDirty(TryCast(发送者, Control))
+        ' Geometry changes affect both this surface and every consumer that
+        ' samples it. The dependency rectangle is in the source's old
+        ' coordinate space, so consumers must be invalidated unconditionally.
+        MarkDirty(TryCast(发送者, Control), requestConsumers:=True)
     End Sub
+
+    Friend Shared Function GetRecoveryTargets(form As Form) As Control()
+        If form Is Nothing OrElse form.IsDisposed Then Return Array.Empty(Of Control)()
+
+        Return _entries.Keys.
+            Where(Function(control)
+                      If control Is Nothing OrElse control.IsDisposed OrElse
+                         Not control.IsHandleCreated OrElse Not control.Visible Then Return False
+                      If Not D3D_V5Presentation.IsV5Control(control) Then Return False
+                      Return Object.ReferenceEquals(D3D_RenderCore.ResolveCompositorForm(control), form)
+                  End Function).
+            OrderBy(Function(control) 获取控件树深度(control)).
+            ToArray()
+    End Function
+
+    Private Shared Function 获取控件树深度(control As Control) As Integer
+        Dim depth As Integer = 0
+        Dim current = control
+        Dim visited As New HashSet(Of Control)()
+        While current IsNot Nothing AndAlso visited.Add(current)
+            depth += 1
+            current = current.Parent
+        End While
+        Return depth
+    End Function
 
     Private Shared Sub 控件句柄已销毁(发送者 As Object, 事件参数 As EventArgs)
         Dim 控件 = TryCast(发送者, Control)

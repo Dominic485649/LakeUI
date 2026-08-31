@@ -17,12 +17,17 @@ End Enum
 ''' Window-level GPU backdrop renderer used by GPU controls. Image mode runs fully through D2D:
 ''' image texture -> optional Gaussian blur -> tint -> optional noise.
 ''' Auto and CaptionOnly remain reserved for a future Desktop Duplication path.
+''' SetImage snapshots caller-owned images; delayed V5 paints never depend on the caller
+''' keeping a System.Drawing.Image alive after the setter returns.
 ''' </summary>
 Public NotInheritable Class D3D_BackdropRenderer
     Implements D3D_IRenderCacheOwner, IDisposable
 
     Private ReadOnly _imageCache As D3D_ImageCache
     Private ReadOnly _deviceManager As D3D_DeviceManager
+    Private ReadOnly _imageSync As New Object()
+    Private ReadOnly _retiredImages As New List(Of Image)()
+    Private _imageSource As WeakReference
     Private _image As Image
     Private _disposed As Boolean
 
@@ -96,9 +101,15 @@ Public NotInheritable Class D3D_BackdropRenderer
 
     Friend Sub EndFrameUse()
         If _frameUseDepth > 0 Then _frameUseDepth -= 1
-        If _frameUseDepth > 0 OrElse Not _trimPending Then Return
-        _trimPending = False
-        D3D_GpuCache.TrimToBudget()
+        If _frameUseDepth > 0 Then Return
+        SyncLock _imageSync
+            DisposeRetiredImages()
+        End SyncLock
+        If _trimPending Then
+            ' 只记录待维护状态。帧结束仍处于动画热路径，不能同步扫描所有
+            ' GPU owner；下一次资源分配或显式清理会在安全边界处理预算。
+            _trimPending = False
+        End If
     End Sub
 
     Public Property Mode As D3D_BackdropMode = D3D_BackdropMode.None
@@ -110,15 +121,34 @@ Public NotInheritable Class D3D_BackdropRenderer
     Public Property NoiseScale As Single = 1.0F
 
     Public Sub SetImage(image As Image)
-        If _image Is image Then
-            Mode = If(image Is Nothing, D3D_BackdropMode.None, D3D_BackdropMode.Image)
-            Return
-        End If
+        SyncLock _imageSync
+            If (image Is Nothing AndAlso _imageSource Is Nothing) OrElse
+               (image IsNot Nothing AndAlso _imageSource IsNot Nothing AndAlso
+                ReferenceEquals(_imageSource.Target, image)) Then
+                Mode = If(image Is Nothing, D3D_BackdropMode.None, D3D_BackdropMode.Image)
+                Return
+            End If
+        End SyncLock
 
-        _image = image
-        Mode = If(image Is Nothing, D3D_BackdropMode.None, D3D_BackdropMode.Image)
-        InvalidateBlurCache()
-        InvalidateAverage()
+        ' The caller owns the source Image and may Dispose it immediately after
+        ' this call. V5 paints use this stable renderer-owned snapshot instead.
+        Dim snapshot As Image = Nothing
+        If image IsNot Nothing Then snapshot = CreateStableImageSnapshot(image)
+
+        SyncLock _imageSync
+            If _disposed Then
+                If snapshot IsNot Nothing Then Try : snapshot.Dispose() : Catch : End Try
+                Return
+            End If
+
+            Dim oldImage = _image
+            _imageSource = If(image Is Nothing, Nothing, New WeakReference(image))
+            _image = snapshot
+            Mode = If(snapshot Is Nothing, D3D_BackdropMode.None, D3D_BackdropMode.Image)
+            If oldImage IsNot Nothing AndAlso Not ReferenceEquals(oldImage, snapshot) Then QueueOrDisposeImage(oldImage)
+            InvalidateBlurCache()
+            InvalidateAverage()
+        End SyncLock
     End Sub
 
     Public Sub ApplyParameters(radius As Integer, passes As Integer, downsample As Integer, noiseScale As Single)
@@ -136,12 +166,17 @@ Public NotInheritable Class D3D_BackdropRenderer
     End Sub
 
     Public Sub DrawImageBackdrop(context As D3D_PaintContext, bounds As RectangleF)
-        If context Is Nothing OrElse Mode <> D3D_BackdropMode.Image OrElse _image Is Nothing Then Return
+        If context Is Nothing Then Return
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim image As Image = Nothing
+        SyncLock _imageSync
+            If _disposed OrElse Mode <> D3D_BackdropMode.Image OrElse _image Is Nothing Then Return
+            image = _image
+        End SyncLock
         context.BeginBackdropUse()
+        BeginFrameUse()
 
         Try
-            Dim image = _image
             If image Is Nothing Then Return
 
             Dim drewBackdrop As Boolean
@@ -162,14 +197,20 @@ Public NotInheritable Class D3D_BackdropRenderer
                 Return
             End If
             Throw
+        Finally
+            EndFrameUse()
         End Try
     End Sub
 
     Public Function TryReadAverageColor(context As D3D_PaintContext, ByRef color As System.Drawing.Color) As Boolean
         color = System.Drawing.Color.Empty
-        If _disposed OrElse Mode <> D3D_BackdropMode.Image OrElse _image Is Nothing Then Return False
-
-        Dim image = _image
+        Dim image As Image = Nothing
+        SyncLock _imageSync
+            If _disposed OrElse Mode <> D3D_BackdropMode.Image OrElse _image Is Nothing Then Return False
+            image = _image
+        End SyncLock
+        BeginFrameUse()
+        Try
         Dim w As Integer
         Dim h As Integer
         Try
@@ -192,6 +233,9 @@ Public NotInheritable Class D3D_BackdropRenderer
         _averageColor = color
         _hasAverage = True
         Return True
+        Finally
+            EndFrameUse()
+        End Try
     End Function
 
     Public Sub Invalidate()
@@ -542,6 +586,50 @@ Public NotInheritable Class D3D_BackdropRenderer
         _hasAverage = False
     End Sub
 
+    Private Shared Function CreateStableImageSnapshot(source As Image) As Image
+        SyncLock source
+            Dim width = source.Width
+            Dim height = source.Height
+            If width <= 0 OrElse height <= 0 Then Return Nothing
+
+            Dim snapshot As New Bitmap(width, height, PixelFormat.Format32bppPArgb)
+            snapshot.SetResolution(96.0F, 96.0F)
+            Try
+                Using g = Graphics.FromImage(snapshot)
+                    g.CompositingMode = CompositingMode.SourceCopy
+                    g.DrawImage(source, New Rectangle(0, 0, width, height))
+                End Using
+                Return snapshot
+            Catch
+                snapshot.Dispose()
+                Throw
+            End Try
+        End SyncLock
+    End Function
+
+    Private Sub QueueOrDisposeImage(image As Image)
+        If image Is Nothing Then Return
+        If _frameUseDepth > 0 Then
+            _retiredImages.Add(image)
+        Else
+            DisposeOwnedImage(image)
+        End If
+    End Sub
+
+    Private Sub DisposeRetiredImages()
+        If _frameUseDepth > 0 OrElse _retiredImages.Count = 0 Then Return
+        Dim retired = _retiredImages.ToArray()
+        _retiredImages.Clear()
+        For Each image In retired
+            DisposeOwnedImage(image)
+        Next
+    End Sub
+
+    Private Sub DisposeOwnedImage(image As Image)
+        Try : _imageCache.ReleaseImage(image) : Catch : End Try
+        Try : image.Dispose() : Catch : End Try
+    End Sub
+
     Private Sub DisposeGpuResources()
         DisposeOffscreenResources()
         DisposeNoiseD2DResources()
@@ -643,10 +731,18 @@ Public NotInheritable Class D3D_BackdropRenderer
 
     Public Sub Dispose() Implements IDisposable.Dispose
         If _disposed Then Return
-        _disposed = True
-        _image = Nothing
+        SyncLock _imageSync
+            _disposed = True
+            Dim current = _image
+            _image = Nothing
+            _imageSource = Nothing
+            If current IsNot Nothing Then QueueOrDisposeImage(current)
+        End SyncLock
         InvalidateAverage()
         DisposeGpuResources()
+        SyncLock _imageSync
+            DisposeRetiredImages()
+        End SyncLock
         If _noiseBitmap IsNot Nothing Then
             Try : _noiseBitmap.Dispose() : Catch : End Try
             _noiseBitmap = Nothing

@@ -105,18 +105,30 @@ Public Module D3D_PaintBridge
             MarkdownViewerCore.CleanupAllD2DResources(level, targetForm)
 
             If level = D3DCacheCleanupLevel.TrimToBudget Then
-                D3D_CpuCache.TrimToBudget()
-                D3D_GpuCache.TrimToBudget()
+                D3D_CpuCache.TrimToBudget(immediate:=True)
+                D3D_GpuCache.TrimToBudget(immediate:=True)
             ElseIf level = D3DCacheCleanupLevel.ReleaseEverything Then
                 D3D_CpuCache.ReleaseAll()
                 D3D_GpuCache.ReleaseAll()
             End If
 
-            If level >= D3DCacheCleanupLevel.RecreateDevice Then
-                D3D_DeviceGlobals.InvalidateDevice()
+            ' ReleaseEverything follows the V3 cache cleanup path. V5 HWND swap chains
+            ' must remain on the current device; recreating them immediately on the same
+            ' child HWND can return E_ACCESSDENIED while DWM retires the old chain.
+            ' RecreateDevice is the explicit device-reset level.
+            If level = D3DCacheCleanupLevel.RecreateDevice Then
                 D3D_RenderCore.InvalidateDeviceForCleanup()
             End If
-            If targetForm Is Nothing Then D3D_D2DInterop.CleanupD2DResources(level)
+            If targetForm Is Nothing Then
+                ' ReleaseEverything keeps the current V5 device alive so HWND
+                ' presenters can continue using their existing device generation.
+                ' Do not dispose the shared D2D/DWrite factories underneath that
+                ' device; only an explicit RecreateDevice may tear them down.
+                Dim interopLevel = If(level = D3DCacheCleanupLevel.ReleaseEverything,
+                                      D3DCacheCleanupLevel.ReleaseAllCaches,
+                                      level)
+                D3D_D2DInterop.CleanupD2DResources(interopLevel)
+            End If
         End If
 
         If shouldRecover Then D3D_RenderCore.QueueCleanupRecovery(recoveryForms)

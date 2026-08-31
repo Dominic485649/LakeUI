@@ -4615,7 +4615,7 @@ Public Class MarkdownViewerCore
     Private Sub CleanupRenderCaches(level As D3DCacheCleanupLevel)
         Select Case level
             Case D3DCacheCleanupLevel.TrimToBudget
-                D3D_CpuCache.TrimToBudget()
+                D3D_CpuCache.TrimToBudget(immediate:=True)
 
             Case Else
                 DisposeImageCache()

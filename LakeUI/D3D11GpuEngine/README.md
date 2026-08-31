@@ -16,6 +16,8 @@ V5 不提供 HDC/Graphics 兼容桥；未迁移的原生控件继续使用 WinFo
 - `RenderGpu` 只能使用传入的 `D3D_PaintContext`。不要缓存 context、device context、brush、bitmap、geometry、text format。
 - 控件状态变化调用 `D3D_InvalidationRouter.RequestRender`；它会进入 `OuterToInnerRefreshScheduler` 合并并按外到内顺序刷新。不要直接 `Update`，也不要触发旧的整树刷新。
 - `D3D_WindowCompositor` 只保留 Form 级共享缓存、文字/图片/Backdrop 服务和设备失效协调，不再创建 swapchain 或渲染整窗。
+- `ReleaseEverything` 是 V3 语义的缓存清理，不是设备重建：它必须保留当前 D3D/D2D/DWrite device/factory，以及可见 V5 surface 和 HWND presenter。只有显式 `RecreateDevice` 才允许销毁共享设备/工厂并推进 generation。
+- 可见控件 surface 和已经提交的 HWND presenter 属于当前显示工作集，只能在句柄销毁、设备失效或控件释放时回收；预算清理只能收缩可重建的中间缓存。
 
 ## 当前核心边界
 
@@ -89,6 +91,20 @@ GlobalOptions.HDR.Profile = GlobalOptions.HdrOutputProfile.HDR400
 - `DrawBackgroundSource(consumer, source, destination)` 的 destination 是控件本地目标矩形；传 `0,0,w,h` 表示全控件，局部目标不要依赖隐式全控件回退。
 - 防自照靠两点：显式 source 不采自己；背景采样内部排除当前 consumer。不要把 consumer 自身或其透明转发链错误设为 source。
 - source 变化和 consumer 变化是两类失效。只有 source 内容变更才应置脏背景缓存；consumer hover/press 通常只请求自身重绘。
+- source 的位置、大小、父级或 DPI 变化也必须传播到全部背景映射 consumer；映射矩形处于 source 坐标系，不能只重绘 source 自身。
+
+图片背景的所有权约定：
+
+- `D3D_BackdropRenderer.SetImage` 会在设置时复制调用方图片为 renderer-owned 32bpp 快照。调用方可以在 setter 返回后立即 Dispose 原图，后续 V5 延迟绘制只访问快照。
+- 旧快照在当前 frame-use 计数归零后才释放，并同时从 `D3D_ImageCache` 移除；不得把调用方 `Image` 直接保存为跨帧 GPU 资源的唯一来源。
+
+HDR 性能约定：
+
+- HDR 图片映射发生在首次 GPU 上传的 CPU staging 阶段，并按图片 identity 与 HDR revision 缓存；不得在每帧主动失效图片上传缓存。
+- HDR 曲线表由配置变更后的后台预热任务建立，绘制路径只保留同步兜底；新增 HDR 处理不能在 `RenderGpu` 中重建全局查表。
+- HDR 矢量颜色缓存按 RGB 而不是完整 ARGB 复用；透明度动画只更新 alpha，不得因每帧 alpha 变化重复计算同一组 RGB 曲线。
+- GPU/CPU 预算 LRU 扫描是节流维护入口，不能在 `Present`、surface 注册、背景帧结束或普通动画帧结束等热路径中强制全量扫描；由新资源创建触发的低频维护和显式降低预算/清理 API 负责回收。
+- 动态动画颜色可能持续产生新画刷；`D3D_BrushCache` 必须使用 O(1) 命中/淘汰的 LRU 链表，禁止在每次颜色 miss 时对完整画刷字典排序或线性扫描。
 
 ## 窗口铬与对话框
 

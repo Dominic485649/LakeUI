@@ -90,6 +90,8 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
                     0,
                     surface.LogicalSize.Width * surface.SampleScale,
                     surface.LogicalSize.Height * surface.SampleScale)
+                ' Preserve the highest-quality scaler for every presentation,
+                ' including 1:1 surfaces; visual quality takes precedence here.
                 _context.DrawBitmap(surface.Bitmap, 目标区域, 1.0F, InterpolationMode.HighQualityCubic, 来源区域, Nothing)
                 _context.EndDraw()
             Catch
@@ -107,11 +109,9 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
             _presenting = False
         End Try
 
-        If presented Then
-            ' 交换链是本次提交刚建立的工作集，先保护自身并回收其他全局 LRU。
-            ' 单个交换链大于预算时允许暂时超限，不能在 Present 返回前销毁它。
-            D3D_GpuCache.TrimToBudget(Me)
-        End If
+        ' V3 约束：Present 只提交当前交换链，不执行进程级缓存维护。
+        ' 全局 owner 扫描/COM 释放必须由资源新增或显式清理入口触发；将其放在
+        ' 动画 Present 热路径会把一次偶发的 LRU 扫描放大成周期性 UI 卡顿。
         Return presented
     End Function
 

@@ -22,18 +22,26 @@ Public NotInheritable Class D3D_ImageCache
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_ImageCache))
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
         If image Is Nothing Then Return Nothing
-        If image.Width <= 0 OrElse image.Height <= 0 Then Return Nothing
-        context.BeginTextureUse()
+        ' System.Drawing.Image is not thread-safe. Backdrop workers may read or
+        ' draw the same source while the UI thread uploads it, and Width/Height
+        ' themselves can throw Object-is-in-use. Serialize the complete source
+        ' snapshot and upload, not just the later DrawImage call.
+        SyncLock image
+            Dim width = image.Width
+            Dim height = image.Height
+            If width <= 0 OrElse height <= 0 Then Return Nothing
+            context.BeginTextureUse()
 
-        Dim generation = context.DeviceGeneration
-        Dim key = BuildKey(image, frameIndex, generation)
-        Dim bytes = CLng(image.Width) * CLng(image.Height) * 4L
+            Dim generation = context.DeviceGeneration
+            Dim key = BuildKey(image, width, height, frameIndex, generation)
+            Dim bytes = CLng(width) * CLng(height) * 4L
 
-        Return _textureCache.AcquireTexture(Of ID2D1Bitmap1)(
-            key,
-            generation,
-            bytes,
-            Function() UploadImage(context.DeviceContext, image))
+            Return _textureCache.AcquireTexture(Of ID2D1Bitmap1)(
+                key,
+                generation,
+                bytes,
+                Function() UploadImage(context.DeviceContext, image, width, height))
+        End SyncLock
     End Function
 
     ''' <summary>
@@ -69,8 +77,12 @@ Public NotInheritable Class D3D_ImageCache
             End Function)
     End Function
 
-    Private Shared Function BuildKey(image As Image, frameIndex As Integer, generation As Integer) As D3D_ImageTextureKey
-        Return New D3D_ImageTextureKey(image, image.Width, image.Height, frameIndex, D3D_HdrOutput.ImageRevision, generation)
+    Private Shared Function BuildKey(image As Image,
+                                     width As Integer,
+                                     height As Integer,
+                                     frameIndex As Integer,
+                                     generation As Integer) As D3D_ImageTextureKey
+        Return New D3D_ImageTextureKey(image, width, height, frameIndex, D3D_HdrOutput.ImageRevision, generation)
     End Function
 
     Private Structure D3D_ImageTextureKey
@@ -106,17 +118,20 @@ Public NotInheritable Class D3D_ImageCache
         End Function
     End Structure
 
-    Private Shared Function UploadImage(context As ID2D1DeviceContext, image As Image) As ID2D1Bitmap1
+    Private Shared Function UploadImage(context As ID2D1DeviceContext,
+                                        image As Image,
+                                        width As Integer,
+                                        height As Integer) As ID2D1Bitmap1
         Dim sourceBitmap = TryCast(image, Bitmap)
         If sourceBitmap IsNot Nothing AndAlso sourceBitmap.PixelFormat = PixelFormat.Format32bppPArgb AndAlso Not D3D_HdrOutput.ShouldMapImages Then
             Return CreateBitmapFromLockedPArgb(context, sourceBitmap)
         End If
 
-        Using staging As New Bitmap(image.Width, image.Height, PixelFormat.Format32bppPArgb)
+        Using staging As New Bitmap(width, height, PixelFormat.Format32bppPArgb)
             staging.SetResolution(96.0F, 96.0F)
             Using g = Graphics.FromImage(staging)
                 g.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                g.DrawImage(image, 0, 0, image.Width, image.Height)
+                g.DrawImage(image, 0, 0, width, height)
             End Using
             D3D_HdrOutput.MapBitmapForImageUpload(staging)
 

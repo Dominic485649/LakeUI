@@ -4,6 +4,8 @@ Imports System.Runtime.InteropServices
 Imports Vortice.Mathematics
 
 Friend Module D3D_HdrOutput
+    ' Image mapping runs on the upload path. Keep the opaque-byte LUT hot so
+    ' large UI backgrounds do not redo three floating-point transforms per pixel.
     Private Const CurveTableSize As Integer = 4096
     Private Const CurveTableMax As Integer = CurveTableSize - 1
 
@@ -36,13 +38,27 @@ Friend Module D3D_HdrOutput
         End Get
     End Property
 
+    ''' <summary>
+    ''' 在 HDR 配置变更后由后台线程预热曲线表，避免首次 UI paint 同步构建百万项预乘查表。
+    ''' GetCurveCache 仍保留同步兜底，确保没有预热完成时渲染结果正确。
+    ''' </summary>
+    Friend Sub WarmCache()
+        If Not GlobalOptions.HDR.Enabled Then Return
+        GetCurveCache()
+    End Sub
+
     Friend Function MapColor4(color As System.Drawing.Color) As Color4
         If Not ShouldMapVectorColors Then Return ToRawColor4(color)
         If color.A = 0 Then Return ToRawColor4(color)
 
         Dim cache = GetCurveCache()
         Dim cached As Color4
-        If cache.TryGetMappedColor4(color.ToArgb(), cached) Then Return cached
+        ' Widen before shifting: Byte shifts are truncated by VB and would
+        ' collapse green/blue channels into the same cache key.
+        Dim rgbKey = CInt(color.R) Or (CInt(color.G) << 8) Or (CInt(color.B) << 16)
+        If cache.TryGetMappedRgb(rgbKey, cached) Then
+            Return New Color4(cached.R, cached.G, cached.B, color.A / 255.0F)
+        End If
 
         Dim r = cache.SrgbToLinear(color.R)
         Dim g = cache.SrgbToLinear(color.G)
@@ -52,9 +68,9 @@ Friend Module D3D_HdrOutput
         Dim mapped = New Color4(cache.LinearToSrgb(Quantize01(r)),
                                 cache.LinearToSrgb(Quantize01(g)),
                                 cache.LinearToSrgb(Quantize01(b)),
-                                color.A / 255.0F)
-        cache.RememberMappedColor4(color.ToArgb(), mapped)
-        Return mapped
+                                1.0F)
+        cache.RememberMappedRgb(rgbKey, mapped)
+        Return New Color4(mapped.R, mapped.G, mapped.B, color.A / 255.0F)
     End Function
 
     Friend Function ToRawColor4(color As System.Drawing.Color) As Color4
@@ -99,10 +115,11 @@ Friend Module D3D_HdrOutput
                     Dim r As Single
                     Dim g As Single
                     Dim b As Single
-                    If a >= 255 Then
-                        r = cache.SrgbToLinear(buffer(idx + 2))
-                        g = cache.SrgbToLinear(buffer(idx + 1))
-                        b = cache.SrgbToLinear(buffer(idx))
+                    If a >= 255 AndAlso Not cache.HasSaturation Then
+                        buffer(idx + 2) = cache.MappedOpaqueByte(buffer(idx + 2))
+                        buffer(idx + 1) = cache.MappedOpaqueByte(buffer(idx + 1))
+                        buffer(idx) = cache.MappedOpaqueByte(buffer(idx))
+                        Continue For
                     Else
                         Dim alphaOffset = a << 8
                         r = cache.UnpremultipliedLinear(alphaOffset Or buffer(idx + 2))
@@ -212,9 +229,12 @@ Friend Module D3D_HdrOutput
         Friend ReadOnly ToneMapLinear As Single()
         Friend ReadOnly LinearToSrgb As Single()
         Friend ReadOnly LinearToSrgbByte As Byte()
+        Friend ReadOnly MappedOpaqueByte As Byte()
         Friend ReadOnly PremultipliedByte As Byte()
-        Private ReadOnly _color4Lock As New Object()
-        Private ReadOnly _color4Cache As New Dictionary(Of Integer, Color4)()
+        Private ReadOnly _rgbLock As New Object()
+        ' RGB-only cache is intentional: animation alpha changes must not force
+        ' another HDR curve evaluation for the same vector color.
+        Private ReadOnly _rgbCache As New Dictionary(Of Integer, Color4)()
 
         Friend Sub New(revision As Integer, exposure As Single, saturation As Single)
             Me.Revision = revision
@@ -227,6 +247,7 @@ Friend Module D3D_HdrOutput
             ToneMapLinear = New Single(CurveTableMax) {}
             LinearToSrgb = New Single(CurveTableMax) {}
             LinearToSrgbByte = New Byte(CurveTableMax) {}
+            MappedOpaqueByte = New Byte(255) {}
             PremultipliedByte = New Byte((256 * CurveTableSize) - 1) {}
 
             For i As Integer = 0 To 255
@@ -250,6 +271,12 @@ Friend Module D3D_HdrOutput
                 LinearToSrgbByte(i) = CByte(Math.Max(0, Math.Min(255, CInt(Math.Round(srgb * 255.0F)))))
             Next
 
+            For i As Integer = 0 To 255
+                Dim linear = SrgbToLinear(i)
+                Dim mapped = ToneMapLinear(Quantize01(linear))
+                MappedOpaqueByte(i) = LinearToSrgbByte(Quantize01(mapped))
+            Next
+
             For alpha As Integer = 0 To 255
                 Dim premulOffset = alpha * CurveTableSize
                 For i As Integer = 0 To CurveTableMax
@@ -259,16 +286,16 @@ Friend Module D3D_HdrOutput
             Next
         End Sub
 
-        Friend Function TryGetMappedColor4(argb As Integer, ByRef color As Color4) As Boolean
-            SyncLock _color4Lock
-                Return _color4Cache.TryGetValue(argb, color)
+        Friend Function TryGetMappedRgb(rgb As Integer, ByRef color As Color4) As Boolean
+            SyncLock _rgbLock
+                Return _rgbCache.TryGetValue(rgb, color)
             End SyncLock
         End Function
 
-        Friend Sub RememberMappedColor4(argb As Integer, color As Color4)
-            SyncLock _color4Lock
-                If _color4Cache.Count >= 2048 AndAlso Not _color4Cache.ContainsKey(argb) Then _color4Cache.Clear()
-                _color4Cache(argb) = color
+        Friend Sub RememberMappedRgb(rgb As Integer, color As Color4)
+            SyncLock _rgbLock
+                If _rgbCache.Count >= 2048 AndAlso Not _rgbCache.ContainsKey(rgb) Then _rgbCache.Clear()
+                _rgbCache(rgb) = color
             End SyncLock
         End Sub
     End Class

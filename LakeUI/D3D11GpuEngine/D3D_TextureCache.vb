@@ -101,9 +101,10 @@ Public NotInheritable Class D3D_TextureCache
         If _frameUseDepth > 0 Then _frameUseDepth -= 1
         If _frameUseDepth > 0 OrElse Not _trimPending Then Return
 
+        ' Frame completion is still an animation hot path. Leave the pending
+        ' flag for the next resource-creation or explicit-cleanup boundary;
+        ' trimming here can synchronously Dispose several D2D resources.
         _trimPending = False
-        TrimToBudget(force:=False)
-        D3D_GpuCache.TrimToBudget()
     End Sub
 
     Private Sub RequestBudgetTrim(Optional protectedKey As Object = Nothing)
@@ -114,6 +115,7 @@ Public NotInheritable Class D3D_TextureCache
         End If
 
         TrimToBudget(force:=False, protectedKey:=protectedKey)
+        ' 新资源创建完成后才允许触发全局预算维护；这是低频、可控的入口。
         D3D_GpuCache.TrimToBudget(Me)
     End Sub
 

@@ -9,6 +9,8 @@ Public NotInheritable Class D3D_BrushCache
     Implements IDisposable
 
     Private ReadOnly _solidBrushes As New Dictionary(Of D3D_BrushKey, D3D_BrushCacheEntry)()
+    ' 动画颜色可能每帧产生新 key；使用链表维护 LRU，避免每次 miss 都扫描全部画刷。
+    Private ReadOnly _solidBrushLru As New LinkedList(Of D3D_BrushKey)()
     Private _clock As Long
     Private _disposed As Boolean
 
@@ -34,12 +36,15 @@ Public NotInheritable Class D3D_BrushCache
         Dim entry As D3D_BrushCacheEntry = Nothing
         If _solidBrushes.TryGetValue(key, entry) Then
             entry.LastUsed = NextClock()
+            Touch(entry)
             Return entry.Brush
         End If
 
         Dim brushColor = If(mapHdr, D3D_HdrOutput.MapColor4(color), D3D_HdrOutput.ToRawColor4(color))
         Dim brush = context.CreateSolidColorBrush(brushColor)
-        _solidBrushes(key) = New D3D_BrushCacheEntry(brush, generation, NextClock())
+        Dim newEntry = New D3D_BrushCacheEntry(brush, generation, NextClock())
+        newEntry.LruNode = _solidBrushLru.AddLast(key)
+        _solidBrushes(key) = newEntry
         Trim(protectedKey:=key)
         Return brush
     End Function
@@ -49,20 +54,37 @@ Public NotInheritable Class D3D_BrushCache
             Try : entry.Brush.Dispose() : Catch : End Try
         Next
         _solidBrushes.Clear()
+        _solidBrushLru.Clear()
     End Sub
 
     Private Sub Trim(protectedKey As D3D_BrushKey)
         Dim limit = Math.Max(0, GlobalOptions.BrushCacheLimit)
         MaxSolidBrushes = limit
         While _solidBrushes.Count > limit
-            Dim victim = _solidBrushes.
-                Where(Function(kv) Not kv.Key.Equals(protectedKey)).
-                OrderBy(Function(kv) kv.Value.LastUsed).
-                FirstOrDefault()
-            If victim.Value Is Nothing Then Exit While
-            _solidBrushes.Remove(victim.Key)
-            Try : victim.Value.Brush.Dispose() : Catch : End Try
+            Dim victimNode = _solidBrushLru.First
+            If victimNode Is Nothing Then Exit While
+            Dim victimKey = victimNode.Value
+            If victimKey.Equals(protectedKey) Then
+                victimNode = victimNode.Next
+                If victimNode Is Nothing Then Exit While
+                victimKey = victimNode.Value
+            End If
+            Dim victimEntry As D3D_BrushCacheEntry = Nothing
+            _solidBrushes.TryGetValue(victimKey, victimEntry)
+            If victimEntry Is Nothing Then Exit While
+            _solidBrushes.Remove(victimKey)
+            _solidBrushLru.Remove(victimNode)
+            victimEntry.LruNode = Nothing
+            Try : victimEntry.Brush.Dispose() : Catch : End Try
         End While
+    End Sub
+
+    Private Sub Touch(entry As D3D_BrushCacheEntry)
+        If entry Is Nothing OrElse entry.LruNode Is Nothing Then Return
+        Dim node = entry.LruNode
+        _solidBrushLru.Remove(node)
+        ' Reattach the same node; AddLast(key) would allocate on every animation hit.
+        _solidBrushLru.AddLast(node)
     End Sub
 
     Private Structure D3D_BrushKey
@@ -119,5 +141,6 @@ Public NotInheritable Class D3D_BrushCache
         Public ReadOnly Property Brush As ID2D1SolidColorBrush
         Public ReadOnly Property Generation As Integer
         Public Property LastUsed As Long
+        Public Property LruNode As LinkedListNode(Of D3D_BrushKey)
     End Class
 End Class

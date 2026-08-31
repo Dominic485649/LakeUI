@@ -299,12 +299,12 @@ Public Module D3D_D2DInterop
     Friend Sub CleanupD2DResources(level As D3DCacheCleanupLevel)
         Select Case level
             Case D3DCacheCleanupLevel.TrimToBudget
-                D3D_GpuCache.TrimToBudget()
+                D3D_GpuCache.TrimToBudget(immediate:=True)
                 TrimFontResolveCacheToCurrentLimit()
 
             Case D3DCacheCleanupLevel.ReleaseVolatileCaches
                 InvalidateOutlineRenderingParams()
-                D3D_GpuCache.TrimToBudget()
+                D3D_GpuCache.TrimToBudget(immediate:=True)
                 TrimFontResolveCacheToCurrentLimit()
 
             Case D3DCacheCleanupLevel.ReleaseAllCaches,

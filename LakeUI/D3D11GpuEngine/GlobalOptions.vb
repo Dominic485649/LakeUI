@@ -156,7 +156,7 @@ Public Class GlobalOptions
         Set(value As Long)
             Dim normalized = Math.Max(0L, value)
             Dim previous = Threading.Interlocked.Exchange(_gpuCacheBudgetBytes, normalized)
-            If normalized < previous Then D3D_GpuCache.TrimToBudget()
+            If normalized < previous Then D3D_GpuCache.TrimToBudget(immediate:=True)
         End Set
     End Property
 
@@ -173,7 +173,7 @@ Public Class GlobalOptions
         Set(value As Long)
             Dim normalized = Math.Max(0L, value)
             Dim previous = Threading.Interlocked.Exchange(_cpuCacheBudgetBytes, normalized)
-            If normalized < previous Then D3D_CpuCache.TrimToBudget()
+            If normalized < previous Then D3D_CpuCache.TrimToBudget(immediate:=True)
         End Set
     End Property
 
@@ -370,6 +370,12 @@ Public Class GlobalOptions
         Private Sub BumpRevision()
             _revision += 1
             If _revision = Integer.MaxValue Then _revision = 1
+            ' Curve tables are large (including the premultiplied-alpha LUT). Warm
+            ' them off the UI thread so enabling HDR does not hitch the next paint.
+            Threading.ThreadPool.QueueUserWorkItem(
+                Sub(state As Object)
+                    Try : D3D_HdrOutput.WarmCache() : Catch : End Try
+                End Sub)
         End Sub
     End Class
 

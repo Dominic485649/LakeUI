@@ -89,7 +89,11 @@ Friend NotInheritable Class D3D_PopupBackdropRenderer
         Try
             Return _renderer.DrawTo(context, target, TintColor, NoiseOpacity)
         Catch ex As Exception
-            If D3D_DeviceGlobals.HandleDeviceLost(ex) Then
+            ' Popup drawing uses the caller's V5 D3D_PaintContext. Route device
+            ' loss to the same DeviceManager that owns that context; the legacy
+            ' D3D_DeviceGlobals owner must never split V5 recovery into a second
+            ' device generation.
+            If D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) Then
                 Try : _host?.Invalidate() : Catch : End Try
                 Return False
             End If

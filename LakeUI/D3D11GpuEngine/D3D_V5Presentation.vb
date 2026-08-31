@@ -237,14 +237,19 @@ Friend NotInheritable Class D3D_V5Presentation
     Private Shared Function 获取清理恢复目标(form As Form) As Control()
         If form Is Nothing OrElse form.IsDisposed Then Return Array.Empty(Of Control)()
 
-        Return _presenters.Keys.
+        Dim targets As New HashSet(Of Control)()
+        For Each control In D3D_ControlSurfaceRegistry.GetRecoveryTargets(form)
+            targets.Add(control)
+        Next
+        For Each control In _presenters.Keys.
             Where(Function(控件)
                       If 控件 Is Nothing OrElse 控件.IsDisposed OrElse
                          Not 控件.IsHandleCreated Then Return False
                       Return Object.ReferenceEquals(D3D_RenderCore.ResolveCompositorForm(控件), form)
-                  End Function).
-            OrderBy(Function(控件) 获取控件树深度(控件)).
-            ToArray()
+                  End Function)
+            If control.Visible AndAlso D3D_V5Presentation.IsV5Control(control) Then targets.Add(control)
+        Next
+        Return targets.OrderBy(Function(control) 获取控件树深度(control)).ToArray()
     End Function
 
     Private Shared Function 获取控件树深度(控件 As Control) As Integer

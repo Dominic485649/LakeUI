@@ -173,7 +173,7 @@ Public NotInheritable Class D3D_RenderCore
         AddInvalidateForm(invalidateForms, targetForm)
 
         If level = D3DCacheCleanupLevel.TrimToBudget Then
-            Try : D3D_GpuCache.TrimToBudget() : Catch : End Try
+            Try : D3D_GpuCache.TrimToBudget(immediate:=True) : Catch : End Try
         End If
 
         If invalidateAfterCleanup Then
@@ -352,7 +352,12 @@ Public NotInheritable Class D3D_RenderCore
     ''' </summary>
     Public Shared Sub ResetRenderCore()
         Dim recoveryForms = GetCleanupRecoveryForms()
-        CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, owner:=Nothing, invalidateAfterCleanup:=False)
+        ' Keep this cold-reset entry point equivalent to the public V3 cleanup
+        ' contract: clear compositor, backdrop and cache state before tearing
+        ' down either device family.
+        D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything,
+                                            owner:=Nothing,
+                                            invalidateAfterCleanup:=False)
         InvalidateDeviceForCleanup()
         QueueCleanupRecovery(recoveryForms)
     End Sub
@@ -363,6 +368,9 @@ Public NotInheritable Class D3D_RenderCore
             ' Flip-model 同一 HWND 同时只能关联一个 swap-chain。必须在进程设备释放前先释放 V5 presenter，
             ' 否则下一 generation 的 CreateSwapChainForHwnd 可能在 DWM 尚持有旧链路时返回 E_ACCESSDENIED。
             D3D_V5Presentation.PrepareForDeviceReset()
+            ' D3D_DeviceGlobals is retained for popup/backdrop compatibility;
+            ' both device owners must be invalidated in this one ordered path.
+            D3D_DeviceGlobals.InvalidateDevice()
             _deviceManager.InvalidateDevice()
         Finally
             Threading.Interlocked.Decrement(_suppressDeviceLostRender)

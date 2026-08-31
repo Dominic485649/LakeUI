@@ -30,6 +30,7 @@ Imports Vortice.Direct2D1
 '''
 ''' === 静态源与背景映射 ===
 ''' • 静态源图不随桌面变化而变化，RequestFrame 只应在首次启用、图片引用变化或窗口尺寸变化时触发。
+'''   SetSource 会复制调用方 Image；后台 worker 只读取 renderer-owned 快照，调用方可在返回后释放原图。
 ''' • Auto 模式的桌面采样仅用于生成毛玻璃输入帧，不参与控件 HDC 呈现；窗口最终仍由 D2D/GPU 路径合成。
 '''   最小化/恢复、标题栏 hover、激活状态切换不应反复重建背景帧。
 ''' • 背景映射不再直接调用 D3D_BackdropSurfaceRenderer 重组玻璃层；它采样 ThisIsYourWindow 在 Form 上已经绘制完成的
@@ -77,7 +78,9 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     ' 0 = Auto 桌面采样；1 = Image 静态源图
     Private _sourceMode As Integer = 0
     Private ReadOnly _sourceLock As New Object()
+    Private _sourceIdentity As WeakReference
     Private _sourceImage As Image
+    Private ReadOnly _retiredSourceImages As New List(Of Image)()
 
     ' ── 参数（运行时可被 UI 线程修改，工作线程读取）──
     Private _radius As Integer = 24
@@ -146,7 +149,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private _lastCpuUse As Long
     Private _lastGpuUse As Long
     Private _cpuBudgetTrimScheduled As Integer
-    Private _gpuBudgetTrimScheduled As Integer
 
 #End Region
 
@@ -302,10 +304,30 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Public Sub SetSource(useImage As Boolean, image As Image)
         Dim sourceMode As Integer = If(useImage, 1, 0)
         Dim changed As Boolean = (Volatile.Read(_sourceMode) <> sourceMode)
+        Dim snapshot As Image = Nothing
+        Dim sameImage As Boolean
+        If useImage AndAlso image IsNot Nothing Then
+            SyncLock _sourceLock
+                sameImage = _sourceIdentity IsNot Nothing AndAlso
+                            ReferenceEquals(_sourceIdentity.Target, image) AndAlso
+                            _sourceImage IsNot Nothing
+                If Not sameImage Then
+                    snapshot = CreateStableImageSnapshot(image)
+                End If
+            End SyncLock
+        End If
         Volatile.Write(_sourceMode, If(useImage, 1, 0))
         SyncLock _sourceLock
-            changed = changed OrElse Not Object.ReferenceEquals(_sourceImage, image)
-            _sourceImage = image
+            changed = changed OrElse (useImage AndAlso Not sameImage) OrElse
+                      (Not useImage AndAlso _sourceImage IsNot Nothing)
+            Dim oldImage = _sourceImage
+            _sourceIdentity = If(useImage AndAlso image IsNot Nothing, New WeakReference(image), Nothing)
+            If useImage AndAlso image IsNot Nothing Then
+                If snapshot IsNot Nothing Then _sourceImage = snapshot
+            Else
+                _sourceImage = Nothing
+            End If
+            If oldImage IsNot Nothing AndAlso Not ReferenceEquals(oldImage, _sourceImage) Then QueueOrDisposeSourceImage(oldImage)
         End SyncLock
         If changed Then
             ' 切换源后已发布的平均色不再可信
@@ -334,8 +356,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Friend Sub CleanupD2DResources(level As D3DCacheCleanupLevel)
         If Volatile.Read(_disposed) <> 0 Then Return
         If level = D3DCacheCleanupLevel.TrimToBudget Then
-            D3D_CpuCache.TrimToBudget()
-            D3D_GpuCache.TrimToBudget()
+            D3D_CpuCache.TrimToBudget(immediate:=True)
+            D3D_GpuCache.TrimToBudget(immediate:=True)
             Return
         End If
         Dim releaseCpuCaches As Boolean = level >= D3DCacheCleanupLevel.ReleaseAllCaches
@@ -474,6 +496,45 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         End SyncLock
     End Sub
 
+    Private Shared Function CreateStableImageSnapshot(source As Image) As Image
+        SyncLock source
+            Dim width = source.Width
+            Dim height = source.Height
+            If width <= 0 OrElse height <= 0 Then Return Nothing
+
+            Dim snapshot As New Bitmap(width, height, PixelFormat.Format32bppPArgb)
+            snapshot.SetResolution(96.0F, 96.0F)
+            Try
+                Using g = Graphics.FromImage(snapshot)
+                    g.CompositingMode = CompositingMode.SourceCopy
+                    g.DrawImage(source, New Rectangle(0, 0, width, height))
+                End Using
+                Return snapshot
+            Catch
+                snapshot.Dispose()
+                Throw
+            End Try
+        End SyncLock
+    End Function
+
+    Private Sub QueueOrDisposeSourceImage(image As Image)
+        If image Is Nothing Then Return
+        If Not _workerIdle.IsSet Then
+            _retiredSourceImages.Add(image)
+        Else
+            Try : image.Dispose() : Catch : End Try
+        End If
+    End Sub
+
+    Private Sub DisposeRetiredSourceImages()
+        If _retiredSourceImages.Count = 0 Then Return
+        Dim retired = _retiredSourceImages.ToArray()
+        _retiredSourceImages.Clear()
+        For Each image In retired
+            Try : image.Dispose() : Catch : End Try
+        Next
+    End Sub
+
     Private Sub DisposeMappedStaticFrameNoLock()
         If _mappedStaticFrame IsNot Nothing Then
             Try : _mappedStaticFrame.Dispose() : Catch : End Try
@@ -606,12 +667,17 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 ScheduleWorker()
             Else
                 _workerIdle.Set()
+                SyncLock _sourceLock
+                    DisposeRetiredSourceImages()
+                End SyncLock
                 RequestCpuBudgetTrim()
             End If
         End Try
     End Sub
 
     Private Sub RequestCpuBudgetTrim()
+        ' 背景 worker 每完成一帧都会到这里；预算未超限时不要向 UI 投递维护消息。
+        If EstimateCpuCacheBytes() <= Math.Max(0L, GlobalOptions.CpuCacheBudgetBytes) Then Return
         If Interlocked.CompareExchange(_cpuBudgetTrimScheduled, 1, 0) <> 0 Then Return
         PostBudgetTrim(
             Sub()
@@ -619,16 +685,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 If Volatile.Read(_disposed) = 0 Then D3D_CpuCache.TrimToBudget(_cpuOwner)
             End Sub,
             _cpuBudgetTrimScheduled)
-    End Sub
-
-    Private Sub RequestGpuBudgetTrim()
-        If Interlocked.CompareExchange(_gpuBudgetTrimScheduled, 1, 0) <> 0 Then Return
-        PostBudgetTrim(
-            Sub()
-                Interlocked.Exchange(_gpuBudgetTrimScheduled, 0)
-                If Volatile.Read(_disposed) = 0 Then D3D_GpuCache.TrimToBudget(_gpuOwner)
-            End Sub,
-            _gpuBudgetTrimScheduled)
     End Sub
 
     Private Sub PostBudgetTrim(trimAction As MethodInvoker, ByRef scheduledFlag As Integer)
@@ -957,8 +1013,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                               New Point(CInt(Math.Floor(target.X)), CInt(Math.Floor(target.Y))))
             End If
             _lastGpuUse = D3D_GpuCache.NextTick()
-            ' DrawTo 仍处于调用方 BeginDraw 内，延迟到 UI 消息返回后再允许淘汰本 owner。
-            RequestGpuBudgetTrim()
+            ' DrawTo 是每帧背景热路径；不要在这里投递预算扫描消息。
+            ' GPU target/noise 创建处会在资源增长时请求维护，显式清理仍可立即执行。
             Return True
         Catch ex As Exception
             If D3D_DeviceManager.IsDeviceLostException(ex) Then
@@ -1305,6 +1361,14 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             _spareFrame?.Dispose()
             _spareFrame = Nothing
             DisposeMappedStaticFrameNoLock()
+        End SyncLock
+        SyncLock _sourceLock
+            If _sourceImage IsNot Nothing Then
+                Try : _sourceImage.Dispose() : Catch : End Try
+                _sourceImage = Nothing
+            End If
+            DisposeRetiredSourceImages()
+            _sourceIdentity = Nothing
         End SyncLock
         DisposeGpuResources()
         ReleaseCaptureBitmap()

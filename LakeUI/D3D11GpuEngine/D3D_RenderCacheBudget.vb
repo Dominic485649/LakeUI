@@ -144,6 +144,9 @@ End Class
 Friend Module D3D_GpuCache
     Private ReadOnly _coordinator As New D3D_RenderCacheBudgetCoordinator()
     Private _tick As Long
+    Private _lastBudgetTrimMilliseconds As Long
+
+    Private Const BudgetTrimIntervalMilliseconds As Long = 100L
 
     Friend Function NextTick() As Long
         Return Threading.Interlocked.Increment(_tick)
@@ -153,7 +156,19 @@ Friend Module D3D_GpuCache
         _coordinator.Register(owner)
     End Sub
 
-    Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing)
+    Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing,
+                             Optional immediate As Boolean = False)
+        ' V3 budget maintenance is opportunistic, not a per-frame synchronous
+        ' task. Present() can be called at animation rate; scanning every owner
+        ' on every frame creates periodic UI stalls once HDR adds more entries.
+        ' Explicit ReleaseAll/cleanup paths remain immediate and are not routed
+        ' through this throttle.
+        If Not immediate Then
+            Dim now = Environment.TickCount64
+            Dim last = Threading.Interlocked.Read(_lastBudgetTrimMilliseconds)
+            If now - last < BudgetTrimIntervalMilliseconds Then Return
+            If Threading.Interlocked.CompareExchange(_lastBudgetTrimMilliseconds, now, last) <> last Then Return
+        End If
         _coordinator.TrimToBudget(GlobalOptions.GpuCacheBudgetBytes,
                                   protectedOwner,
                                   AddressOf D3D_RenderDiagnostics.CacheEviction)
@@ -171,6 +186,9 @@ End Module
 Friend Module D3D_CpuCache
     Private ReadOnly _coordinator As New D3D_RenderCacheBudgetCoordinator()
     Private _tick As Long
+    Private _lastBudgetTrimMilliseconds As Long
+
+    Private Const BudgetTrimIntervalMilliseconds As Long = 100L
 
     Friend Function NextTick() As Long
         Return Threading.Interlocked.Increment(_tick)
@@ -180,7 +198,14 @@ Friend Module D3D_CpuCache
         _coordinator.Register(owner)
     End Sub
 
-    Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing)
+    Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing,
+                             Optional immediate As Boolean = False)
+        If Not immediate Then
+            Dim now = Environment.TickCount64
+            Dim last = Threading.Interlocked.Read(_lastBudgetTrimMilliseconds)
+            If now - last < BudgetTrimIntervalMilliseconds Then Return
+            If Threading.Interlocked.CompareExchange(_lastBudgetTrimMilliseconds, now, last) <> last Then Return
+        End If
         _coordinator.TrimToBudget(GlobalOptions.CpuCacheBudgetBytes,
                                   protectedOwner,
                                   AddressOf D3D_RenderDiagnostics.CacheEviction)
