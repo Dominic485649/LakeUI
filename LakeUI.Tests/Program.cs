@@ -25,10 +25,47 @@ static class Program
         VerifyModernPanelOverlayRenderingContract();
         VerifyModernButtonAnimationDefaults();
         VerifyRenderCacheBudgetCoordinator();
+        VerifyVisibleControlSurfaceProtection();
         VerifyGlobalBudgetProperties();
         VerifyCleanupRecoveryTargets();
         VerifyV5ProbeApi();
         Console.WriteLine("LakeUI tests passed.");
+    }
+
+    private static void VerifyVisibleControlSurfaceProtection()
+    {
+        using var form = new Form();
+        using var control = new ModernPanel();
+        form.Controls.Add(control);
+        form.Show();
+        Application.DoEvents();
+
+        var surfaceType = typeof(MarkdownViewerCore).Assembly.GetType("LakeUI.D3D_ControlSurface")!;
+        var oldest = surfaceType.GetProperty("OldestUseTick", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var trim = surfaceType.GetMethod("TrimOldest", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var manager = typeof(D3D_RenderCore).GetProperty("DeviceManager", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.GetValue(null)!;
+        var surface = Activator.CreateInstance(surfaceType,
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            args: new object[] { control, manager },
+            culture: null)!;
+        try
+        {
+            var allocated = surfaceType.GetField("_allocatedBytes", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            allocated.SetValue(surface, 4096L);
+            var lastUsed = surfaceType.GetField("_lastUsed", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            lastUsed.SetValue(surface, 1L);
+
+            Assert((long)oldest.GetValue(surface)! != 1L,
+                "Visible control surfaces must not become LRU victims.");
+            Assert(!(bool)trim.Invoke(surface, null)!,
+                "Visible control surfaces must reject budget trimming.");
+        }
+        finally
+        {
+            form.Hide();
+            (surface as IDisposable)?.Dispose();
+        }
     }
 
     private static void VerifyAgentThinkingTagParsing()

@@ -13,6 +13,7 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
     Private ReadOnly _lock As New Object()
     Private ReadOnly _trimLock As New Object()
     Private ReadOnly _owners As New List(Of WeakReference(Of D3D_IRenderCacheOwner))()
+    Private _trimActive As Boolean
 
     Friend Sub Register(owner As D3D_IRenderCacheOwner)
         If owner Is Nothing Then Return
@@ -33,6 +34,12 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
         budget = Math.Max(0L, budget)
 
         SyncLock _trimLock
+            ' Evicting a surface can finish its frame-use scope, which may ask
+            ' the coordinator to trim again on the same UI thread. Do not recurse
+            ' into the coordinator while the outer eviction pass is still active.
+            If _trimActive Then Return
+            _trimActive = True
+            Try
             Dim failedOwners As New HashSet(Of D3D_IRenderCacheOwner)(ReferenceEqualityComparer.Instance)
             Dim guard As Integer = 0
             Do
@@ -82,6 +89,9 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
                 evictionCallback?.Invoke()
                 guard += 1
             Loop While guard < 4096
+            Finally
+                _trimActive = False
+            End Try
         End SyncLock
     End Sub
 

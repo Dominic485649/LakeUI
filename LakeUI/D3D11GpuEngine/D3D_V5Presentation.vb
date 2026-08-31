@@ -128,7 +128,6 @@ Friend NotInheritable Class D3D_V5Presentation
                                                    控件)
             取消重试(控件)
             D3D_RenderCore.NotifyControlInvalidated(控件, New Rectangle(Point.Empty, 控件.ClientSize))
-            D3D_ControlSurfaceRegistry.ReleaseUnreferencedSurface(控件)
         Catch 异常 As Exception
             If D3D_RenderCore.DeviceManager.HandleDeviceLost(异常) Then
                 排队重试(控件)

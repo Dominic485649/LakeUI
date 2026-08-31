@@ -165,6 +165,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         RegisterInstance(Me)
     End Sub
 
+    Private Function IsHostVisible() As Boolean
+        Return _host IsNot Nothing AndAlso Not _host.IsDisposed AndAlso _host.Visible
+    End Function
+
     Private NotInheritable Class CpuBudgetOwner
         Implements D3D_IRenderCacheOwner
 
@@ -191,6 +195,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             Get
                 Dim owner As D3D_BackdropSurfaceRenderer = Nothing
                 If Not TryGetOwner(owner) Then Return Long.MaxValue
+                If owner.IsHostVisible() Then Return Long.MaxValue
                 Return owner._lastCpuUse
             End Get
         End Property
@@ -198,6 +203,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
             Dim owner As D3D_BackdropSurfaceRenderer = Nothing
             If Not TryGetOwner(owner) Then Return False
+            If owner.IsHostVisible() Then Return False
             Return owner.TrimCpuCaches()
         End Function
 
@@ -233,6 +239,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             Get
                 Dim owner As D3D_BackdropSurfaceRenderer = Nothing
                 If Not TryGetOwner(owner) Then Return Long.MaxValue
+                If owner.IsHostVisible() Then Return Long.MaxValue
                 Return owner._lastGpuUse
             End Get
         End Property
@@ -240,6 +247,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
             Dim owner As D3D_BackdropSurfaceRenderer = Nothing
             If Not TryGetOwner(owner) Then Return False
+            If owner.IsHostVisible() Then Return False
             Return owner.TrimGpuCaches()
         End Function
 
@@ -608,7 +616,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         PostBudgetTrim(
             Sub()
                 Interlocked.Exchange(_cpuBudgetTrimScheduled, 0)
-                If Volatile.Read(_disposed) = 0 Then D3D_CpuCache.TrimToBudget()
+                If Volatile.Read(_disposed) = 0 Then D3D_CpuCache.TrimToBudget(_cpuOwner)
             End Sub,
             _cpuBudgetTrimScheduled)
     End Sub
@@ -618,7 +626,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         PostBudgetTrim(
             Sub()
                 Interlocked.Exchange(_gpuBudgetTrimScheduled, 0)
-                If Volatile.Read(_disposed) = 0 Then D3D_GpuCache.TrimToBudget()
+                If Volatile.Read(_disposed) = 0 Then D3D_GpuCache.TrimToBudget(_gpuOwner)
             End Sub,
             _gpuBudgetTrimScheduled)
     End Sub

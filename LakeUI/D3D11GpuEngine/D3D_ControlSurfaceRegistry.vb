@@ -585,10 +585,11 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     Friend Shared Sub ReleaseUnreferencedSurface(control As Control)
         Dim 项目 As Entry = Nothing
         If control Is Nothing OrElse Not _entries.TryGetValue(control, 项目) OrElse 项目 Is Nothing Then Return
+        ' 可见控件的表面是当前 HWND 的显示工作集。V3 保留这类表面，
+        ' 否则下一次窗口装饰或背景映射重绘只能看到被清空的纯色表面。
+        If Not control.IsDisposed AndAlso control.Visible Then Return
         If 项目.Rendering OrElse _consumers.ContainsKey(control) Then Return
         If 项目.Surface Is Nothing OrElse 项目.Surface.Bitmap Is Nothing Then Return
-        ' The HWND presenter owns the already submitted frame. Keep a surface
-        ' only while another control needs to sample it as a backdrop.
         项目.Surface.ReleaseSurfaceResources(markRegistryDirty:=False)
     End Sub
 
