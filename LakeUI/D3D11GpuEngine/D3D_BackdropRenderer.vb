@@ -96,9 +96,10 @@ Public NotInheritable Class D3D_BackdropRenderer
 
     Friend Sub EndFrameUse()
         If _frameUseDepth > 0 Then _frameUseDepth -= 1
-        If _frameUseDepth > 0 OrElse Not _trimPending Then Return
+        If _frameUseDepth > 0 Then Return
         _trimPending = False
-        D3D_GpuCache.TrimToBudget()
+        ' 当前 backdrop 的 D2D 命令可能尚未 EndDraw，保护自身并回收其他 owner。
+        D3D_GpuCache.TrimToBudget(Me)
     End Sub
 
     Public Property Mode As D3D_BackdropMode = D3D_BackdropMode.None

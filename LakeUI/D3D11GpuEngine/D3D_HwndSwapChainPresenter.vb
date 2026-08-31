@@ -44,12 +44,15 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
     Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
         Get
             If _presenting OrElse CacheBytes <= 0 Then Return Long.MaxValue
+            ' 可见交换链是最终显示工作集，只参与总量计量，不作为缓存主动淘汰。
+            If _owner IsNot Nothing AndAlso Not _owner.IsDisposed AndAlso _owner.Visible Then Return Long.MaxValue
             Return If(_lastUsed <= 0, Long.MaxValue - 1, _lastUsed)
         End Get
     End Property
 
     Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
         If _presenting OrElse CacheBytes <= 0 Then Return False
+        If _owner IsNot Nothing AndAlso Not _owner.IsDisposed AndAlso _owner.Visible Then Return False
         释放设备资源()
         Return True
     End Function
@@ -72,6 +75,7 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
             End If
         End If
 
+        Dim presented As Boolean
         Try
             _presenting = True
             _context.Target = _target
@@ -98,10 +102,17 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
             _swapChain.Present(0UI, PresentFlags.None)
             _presentedSurfaceRevision = surface.Revision
             _lastUsed = D3D_GpuCache.NextTick()
-            Return True
+            presented = True
         Finally
             _presenting = False
         End Try
+
+        If presented Then
+            ' 交换链是本次提交刚建立的工作集，先保护自身并回收其他全局 LRU。
+            ' 单个交换链大于预算时允许暂时超限，不能在 Present 返回前销毁它。
+            D3D_GpuCache.TrimToBudget(Me)
+        End If
+        Return presented
     End Function
 
     Friend Function HasPresented(surface As D3D_ControlSurface) As Boolean

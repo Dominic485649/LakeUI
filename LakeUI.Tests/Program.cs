@@ -24,8 +24,11 @@ static class Program
         VerifyTabListBackgroundSourceBrowsable();
         VerifyModernPanelOverlayRenderingContract();
         VerifyModernButtonAnimationDefaults();
+        VerifyRenderCacheBudgetCoordinator();
+        VerifyGlobalBudgetProperties();
+        VerifyCleanupRecoveryTargets();
         VerifyV5ProbeApi();
-        Console.WriteLine("Markdown code and Mermaid parser tests passed.");
+        Console.WriteLine("LakeUI tests passed.");
     }
 
     private static void VerifyAgentThinkingTagParsing()
@@ -217,12 +220,149 @@ static class Program
     private static void VerifyModernButtonAnimationDefaults()
     {
         using var button = new ModernButton();
-        Assert(button.AnimationDuration == 1000,
-            "ModernButton.AnimationDuration must default to 1000 milliseconds.");
+        Assert(button.AnimationDuration == 300,
+            "ModernButton.AnimationDuration must default to 300 milliseconds.");
         var defaultValue = typeof(ModernButton).GetProperty("AnimationDuration")?
             .GetCustomAttribute<DefaultValueAttribute>();
-        Assert((int?)defaultValue?.Value == 1000,
+        Assert((int?)defaultValue?.Value == 300,
             "ModernButton.AnimationDuration designer metadata must match its runtime default.");
+
+        Assert(button.RippleAnimationDuration == 1200,
+            "ModernButton.RippleAnimationDuration must default to 1200 milliseconds.");
+        var rippleDefaultValue = typeof(ModernButton).GetProperty("RippleAnimationDuration")?
+            .GetCustomAttribute<DefaultValueAttribute>();
+        Assert((int?)rippleDefaultValue?.Value == 1200,
+            "ModernButton.RippleAnimationDuration designer metadata must match its runtime default.");
+
+        button.AnimationDuration = 450;
+        Assert(button.AnimationDuration == 450 && button.RippleAnimationDuration == 1200,
+            "ModernButton.AnimationDuration must not change the ripple animation duration.");
+        button.RippleAnimationDuration = 750;
+        Assert(button.AnimationDuration == 450 && button.RippleAnimationDuration == 750,
+            "ModernButton.RippleAnimationDuration must be independently configurable.");
+    }
+
+    private static void VerifyCleanupRecoveryTargets()
+    {
+        using var form = new Form();
+        using var otherForm = new Form();
+        using var panel = new ModernPanel();
+        using var button = new ModernButton();
+        using var otherButton = new ModernButton();
+        form.Controls.Add(panel);
+        panel.Controls.Add(button);
+        otherForm.Controls.Add(otherButton);
+
+        _ = form.Handle;
+        _ = panel.Handle;
+        _ = button.Handle;
+        _ = otherForm.Handle;
+        _ = otherButton.Handle;
+
+        var assembly = typeof(MarkdownViewerCore).Assembly;
+        var presentation = assembly.GetType("LakeUI.D3D_V5Presentation")!;
+        var createPresenter = presentation.GetMethod(
+            "获取或创建呈现器", BindingFlags.Static | BindingFlags.NonPublic)!;
+        createPresenter.Invoke(null, new object[] { panel });
+        createPresenter.Invoke(null, new object[] { button });
+        createPresenter.Invoke(null, new object[] { otherButton });
+
+        var getTargets = presentation.GetMethod(
+            "获取清理恢复目标", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var targets = (Control[])getTargets.Invoke(null, new object[] { form })!;
+        Assert(targets.Length == 2 && ReferenceEquals(targets[0], panel) && ReferenceEquals(targets[1], button),
+            "Full cleanup recovery must include only the target form's V5 presenters in outer-to-inner order.");
+    }
+
+    private static void VerifyRenderCacheBudgetCoordinator()
+    {
+        var lruCoordinator = new D3D_RenderCacheBudgetCoordinator();
+        var newer = new FakeCacheOwner(400, 20);
+        var older = new FakeCacheOwner(400, 10);
+        lruCoordinator.Register(newer);
+        lruCoordinator.Register(older);
+        lruCoordinator.TrimToBudget(500, null!, null!);
+        Assert(older.CacheBytes == 0 && newer.CacheBytes == 400,
+            "Render cache budget must evict the globally oldest owner first.");
+
+        var busyCoordinator = new D3D_RenderCacheBudgetCoordinator();
+        var busy = new FakeCacheOwner(400, 1, canTrim: false);
+        var evictable = new FakeCacheOwner(400, 2);
+        busyCoordinator.Register(busy);
+        busyCoordinator.Register(evictable);
+        busyCoordinator.TrimToBudget(500, null!, null!);
+        Assert(busy.TrimAttempts == 1 && busy.CacheBytes == 400 && evictable.CacheBytes == 0,
+            "A temporarily busy oldest owner must not stop eviction of other eligible owners.");
+
+        var protectedCoordinator = new D3D_RenderCacheBudgetCoordinator();
+        var protectedOwner = new FakeCacheOwner(400, 1);
+        var otherOwner = new FakeCacheOwner(400, 2);
+        protectedCoordinator.Register(protectedOwner);
+        protectedCoordinator.Register(otherOwner);
+        protectedCoordinator.TrimToBudget(500, protectedOwner, null!);
+        Assert(protectedOwner.CacheBytes == 400 && otherOwner.CacheBytes == 0,
+            "The owner producing the current frame must remain protected while other caches are evicted.");
+    }
+
+    private static void VerifyGlobalBudgetProperties()
+    {
+        var oldGpuBudget = GlobalOptions.GpuCacheBudgetBytes;
+        var oldCpuBudget = GlobalOptions.CpuCacheBudgetBytes;
+        try
+        {
+            GlobalOptions.GpuCacheBudgetBytes = long.MaxValue;
+            var gpuOwner = new FakeCacheOwner(700, D3D_GpuCache.NextTick());
+            D3D_GpuCache.Register(gpuOwner);
+            GlobalOptions.GpuCacheBudgetBytes = 600;
+            Assert(gpuOwner.CacheBytes == 0,
+                "Lowering the global GPU budget must immediately trim existing cache owners.");
+
+            GlobalOptions.CpuCacheBudgetBytes = long.MaxValue;
+            var cpuOwner = new FakeCacheOwner(700, D3D_CpuCache.NextTick());
+            D3D_CpuCache.Register(cpuOwner);
+            GlobalOptions.CpuCacheBudgetBytes = 600;
+            Assert(cpuOwner.CacheBytes == 0,
+                "Lowering the global CPU budget must immediately trim existing cache owners.");
+
+            GlobalOptions.GpuCacheBudgetBytes = -1;
+            GlobalOptions.CpuCacheBudgetBytes = -1;
+            Assert(GlobalOptions.GpuCacheBudgetBytes == 0 && GlobalOptions.CpuCacheBudgetBytes == 0,
+                "Negative global cache budgets must normalize to zero.");
+        }
+        finally
+        {
+            GlobalOptions.GpuCacheBudgetBytes = oldGpuBudget;
+            GlobalOptions.CpuCacheBudgetBytes = oldCpuBudget;
+        }
+    }
+
+    private sealed class FakeCacheOwner : D3D_IRenderCacheOwner
+    {
+        private readonly bool _canTrim;
+
+        public FakeCacheOwner(long cacheBytes, long oldestUseTick, bool canTrim = true)
+        {
+            CacheBytes = cacheBytes;
+            OldestUseTick = oldestUseTick;
+            _canTrim = canTrim;
+        }
+
+        public long CacheBytes { get; private set; }
+        public long OldestUseTick { get; }
+        public int TrimAttempts { get; private set; }
+
+        public bool TrimOldest()
+        {
+            TrimAttempts++;
+            if (!_canTrim || CacheBytes <= 0) return false;
+            CacheBytes = 0;
+            return true;
+        }
+
+        public void ReleaseAll()
+        {
+            CacheBytes = 0;
+        }
     }
 
     private static void VerifyFenceParsing()

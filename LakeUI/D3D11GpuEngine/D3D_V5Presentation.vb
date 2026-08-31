@@ -225,6 +225,39 @@ Friend NotInheritable Class D3D_V5Presentation
         释放设备资源()
     End Sub
 
+    ''' <summary>
+    ''' 在设备级清理完整结束后，按外到内顺序重新提交指定窗体已有的 V5 表面。
+    ''' 这里只扫描已经创建过 presenter 的控件，不扩散到普通 WinForms 子控件。
+    ''' </summary>
+    Friend Shared Sub RequestRenderAfterCleanup(form As Form)
+        For Each 控件 In 获取清理恢复目标(form)
+            RequestRender(控件)
+        Next
+    End Sub
+
+    Private Shared Function 获取清理恢复目标(form As Form) As Control()
+        If form Is Nothing OrElse form.IsDisposed Then Return Array.Empty(Of Control)()
+
+        Return _presenters.Keys.
+            Where(Function(控件)
+                      If 控件 Is Nothing OrElse 控件.IsDisposed OrElse
+                         Not 控件.IsHandleCreated Then Return False
+                      Return Object.ReferenceEquals(D3D_RenderCore.ResolveCompositorForm(控件), form)
+                  End Function).
+            OrderBy(Function(控件) 获取控件树深度(控件)).
+            ToArray()
+    End Function
+
+    Private Shared Function 获取控件树深度(控件 As Control) As Integer
+        Dim 深度 As Integer
+        Dim 当前 = If(控件 Is Nothing, Nothing, 控件.Parent)
+        While 当前 IsNot Nothing
+            深度 += 1
+            当前 = 当前.Parent
+        End While
+        Return 深度
+    End Function
+
     Private Shared Sub 释放设备资源()
         For Each 呈现器 In _presenters.Values
             Try : 呈现器.HandleDeviceLost() : Catch : End Try

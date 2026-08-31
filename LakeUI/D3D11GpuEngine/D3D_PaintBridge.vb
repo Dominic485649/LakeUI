@@ -90,9 +90,14 @@ Public Module D3D_PaintBridge
     Public Function CleanupD2DResources(level As D3DCacheCleanupLevel,
                                         Optional owner As Control = Nothing,
                                         Optional invalidateAfterCleanup As Boolean = False) As Integer
-        Dim targetForm = If(level = D3DCacheCleanupLevel.ReleaseEverything, Nothing, D3D_RenderCore.ResolveCompositorForm(owner))
+        ' 设备由进程内所有窗口共享；重建设备及以上级别不能只恢复 owner 窗体。
+        Dim targetForm = If(level >= D3DCacheCleanupLevel.RecreateDevice, Nothing, D3D_RenderCore.ResolveCompositorForm(owner))
+        Dim shouldRecover = invalidateAfterCleanup OrElse level >= D3DCacheCleanupLevel.RecreateDevice
+        Dim recoveryForms = If(shouldRecover,
+                               D3D_RenderCore.GetCleanupRecoveryForms(targetForm),
+                               Array.Empty(Of Form)())
         Dim hasActivePaint = D3D_RenderCore.HasActivePaint(targetForm)
-        Dim cleaned = D3D_RenderCore.CleanupD2DResources(level, targetForm, invalidateAfterCleanup)
+        Dim cleaned = D3D_RenderCore.CleanupD2DResources(level, targetForm, invalidateAfterCleanup:=False)
 
         If Not hasActivePaint Then
             D3D_BackgroundPenetration.CleanupD2DResources(level, targetForm)
@@ -113,6 +118,8 @@ Public Module D3D_PaintBridge
             End If
             If targetForm Is Nothing Then D3D_D2DInterop.CleanupD2DResources(level)
         End If
+
+        If shouldRecover Then D3D_RenderCore.QueueCleanupRecovery(recoveryForms)
 
         Return cleaned
     End Function

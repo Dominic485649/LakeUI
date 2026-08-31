@@ -145,7 +145,7 @@ Public NotInheritable Class D3D_RenderCore
     Friend Shared Function CleanupD2DResources(level As D3DCacheCleanupLevel,
                                                Optional owner As Control = Nothing,
                                                Optional invalidateAfterCleanup As Boolean = False) As Integer
-        Dim targetForm As Form = If(level = D3DCacheCleanupLevel.ReleaseEverything, Nothing, ResolveCompositorForm(owner))
+        Dim targetForm As Form = If(level >= D3DCacheCleanupLevel.RecreateDevice, Nothing, ResolveCompositorForm(owner))
         Dim snapshot As New List(Of D3D_WindowCompositor)()
 
         SyncLock _compositorsLock
@@ -178,7 +178,7 @@ Public NotInheritable Class D3D_RenderCore
 
         If invalidateAfterCleanup Then
             For Each form In invalidateForms
-                RequestFullFormRender(form)
+                QueueFullFormRenderAfterCleanup(form)
             Next
         End If
 
@@ -260,6 +260,50 @@ Public NotInheritable Class D3D_RenderCore
         End Try
     End Sub
 
+    Friend Shared Function GetCleanupRecoveryForms(Optional owner As Control = Nothing) As Form()
+        Dim targetForm = ResolveCompositorForm(owner)
+        Dim forms As New List(Of Form)()
+
+        SyncLock _compositorsLock
+            If targetForm IsNot Nothing Then
+                AddInvalidateForm(forms, targetForm)
+            Else
+                For Each compositor In _compositors.Values
+                    If compositor IsNot Nothing AndAlso Not compositor.IsDisposed Then
+                        AddInvalidateForm(forms, compositor.Form)
+                    End If
+                Next
+            End If
+        End SyncLock
+
+        Return forms.ToArray()
+    End Function
+
+    Friend Shared Sub QueueCleanupRecovery(forms As Form())
+        If forms Is Nothing Then Return
+        For Each form In forms
+            QueueFullFormRenderAfterCleanup(form)
+        Next
+    End Sub
+
+    Private Shared Sub QueueFullFormRenderAfterCleanup(form As Form)
+        If form Is Nothing OrElse form.IsDisposed OrElse Not form.IsHandleCreated Then Return
+
+        Try
+            form.BeginInvoke(CType(
+                Sub()
+                    If form.IsDisposed OrElse Not form.IsHandleCreated Then Return
+                    ' Form 自身负责 ThisIsYourWindow 等窗口级装饰；V5 控件各自拥有 HWND
+                    ' 交换链，必须单独重新提交，普通 Form.Invalidate 不会唤醒这些表面。
+                    RequestFullFormRender(form)
+                    D3D_V5Presentation.RequestRenderAfterCleanup(form)
+                End Sub,
+                MethodInvoker))
+        Catch
+            ' 句柄正在销毁时无需恢复；HandleCreated 会走正常的首次绘制路径。
+        End Try
+    End Sub
+
     Private Shared Function TryGetExistingWindowCompositor(control As Control) As D3D_WindowCompositor
         Dim form = ResolveCompositorForm(control)
         Return TryGetExistingWindowCompositor(form)
@@ -307,8 +351,10 @@ Public NotInheritable Class D3D_RenderCore
     ''' 下一次 RequestRender 会按新的设备代号按需重建设备和缓存。
     ''' </summary>
     Public Shared Sub ResetRenderCore()
+        Dim recoveryForms = GetCleanupRecoveryForms()
         CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, owner:=Nothing, invalidateAfterCleanup:=False)
         InvalidateDeviceForCleanup()
+        QueueCleanupRecovery(recoveryForms)
     End Sub
 
     Friend Shared Sub InvalidateDeviceForCleanup()

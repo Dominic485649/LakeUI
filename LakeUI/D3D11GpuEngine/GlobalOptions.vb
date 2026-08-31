@@ -143,17 +143,39 @@ Public Class GlobalOptions
 
     ''' <summary>进程级 GPU 缓存总预算。</summary>
     ''' <remarks>
-    ''' <para>默认值：128 MiB。用于统一约束所有 GPU 缓存、控件表面、交换链缓冲和离屏目标。</para>
+    ''' <para>默认值：128 MiB。用于统一约束可观测的 GPU 缓存、控件表面、交换链缓冲和离屏目标。</para>
     ''' <para>预算按进程总量计算，不再按窗口、图片或背景源分别设置。</para>
+    ''' <para>可见交换链是必要显示工作集，只参与计量并促使其他缓存收缩，不会为满足预算而销毁。</para>
+    ''' <para>不包含驱动、DWM 和 D2D 特效内部工作内存；必要、正在使用或受保护的资源可以超过预算。</para>
     ''' </remarks>
-    Public Shared Property GpuCacheBudgetBytes As Long = 128L * 1024L * 1024L
+    Private Shared _gpuCacheBudgetBytes As Long = 128L * 1024L * 1024L
+    Public Shared Property GpuCacheBudgetBytes As Long
+        Get
+            Return Threading.Interlocked.Read(_gpuCacheBudgetBytes)
+        End Get
+        Set(value As Long)
+            Dim normalized = Math.Max(0L, value)
+            Dim previous = Threading.Interlocked.Exchange(_gpuCacheBudgetBytes, normalized)
+            If normalized < previous Then D3D_GpuCache.TrimToBudget()
+        End Set
+    End Property
 
     ''' <summary>进程级 CPU 位图缓存总预算。</summary>
     ''' <remarks>
-    ''' <para>默认值：128 MiB。用于统一约束背景穿透 backing bitmap、Markdown 已加载 Image 和 Backdrop 抓屏/当前/备用帧。</para>
+    ''' <para>默认值：96 MiB。用于统一约束 Markdown 已加载 Image 和 Backdrop 抓屏/当前/备用帧。</para>
     ''' <para>预算按进程总量计算，清理到预算内时按全局 LRU 释放可重建条目。</para>
     ''' </remarks>
-    Public Shared Property CpuCacheBudgetBytes As Long = 96L * 1024L * 1024L
+    Private Shared _cpuCacheBudgetBytes As Long = 96L * 1024L * 1024L
+    Public Shared Property CpuCacheBudgetBytes As Long
+        Get
+            Return Threading.Interlocked.Read(_cpuCacheBudgetBytes)
+        End Get
+        Set(value As Long)
+            Dim normalized = Math.Max(0L, value)
+            Dim previous = Threading.Interlocked.Exchange(_cpuCacheBudgetBytes, normalized)
+            If normalized < previous Then D3D_CpuCache.TrimToBudget()
+        End Set
+    End Property
 
     ''' <summary>纯色 D2D 画刷缓存条目上限。</summary>
     ''' <remarks>默认值：256。可靠字节估算不可得，因此画刷仍按条目数限制。</remarks>

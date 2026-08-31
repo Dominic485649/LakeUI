@@ -145,6 +145,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private ReadOnly _gpuOwner As GpuBudgetOwner
     Private _lastCpuUse As Long
     Private _lastGpuUse As Long
+    Private _cpuBudgetTrimScheduled As Integer
+    Private _gpuBudgetTrimScheduled As Integer
 
 #End Region
 
@@ -596,7 +598,41 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 ScheduleWorker()
             Else
                 _workerIdle.Set()
+                RequestCpuBudgetTrim()
             End If
+        End Try
+    End Sub
+
+    Private Sub RequestCpuBudgetTrim()
+        If Interlocked.CompareExchange(_cpuBudgetTrimScheduled, 1, 0) <> 0 Then Return
+        PostBudgetTrim(
+            Sub()
+                Interlocked.Exchange(_cpuBudgetTrimScheduled, 0)
+                If Volatile.Read(_disposed) = 0 Then D3D_CpuCache.TrimToBudget()
+            End Sub,
+            _cpuBudgetTrimScheduled)
+    End Sub
+
+    Private Sub RequestGpuBudgetTrim()
+        If Interlocked.CompareExchange(_gpuBudgetTrimScheduled, 1, 0) <> 0 Then Return
+        PostBudgetTrim(
+            Sub()
+                Interlocked.Exchange(_gpuBudgetTrimScheduled, 0)
+                If Volatile.Read(_disposed) = 0 Then D3D_GpuCache.TrimToBudget()
+            End Sub,
+            _gpuBudgetTrimScheduled)
+    End Sub
+
+    Private Sub PostBudgetTrim(trimAction As MethodInvoker, ByRef scheduledFlag As Integer)
+        Dim host = _host
+        If host Is Nothing OrElse host.IsDisposed OrElse Not host.IsHandleCreated Then
+            Interlocked.Exchange(scheduledFlag, 0)
+            Return
+        End If
+        Try
+            host.BeginInvoke(trimAction)
+        Catch
+            Interlocked.Exchange(scheduledFlag, 0)
         End Try
     End Sub
 
@@ -913,6 +949,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                               New Point(CInt(Math.Floor(target.X)), CInt(Math.Floor(target.Y))))
             End If
             _lastGpuUse = D3D_GpuCache.NextTick()
+            ' DrawTo 仍处于调用方 BeginDraw 内，延迟到 UI 消息返回后再允许淘汰本 owner。
+            RequestGpuBudgetTrim()
             Return True
         Catch ex As Exception
             If D3D_DeviceManager.IsDeviceLostException(ex) Then

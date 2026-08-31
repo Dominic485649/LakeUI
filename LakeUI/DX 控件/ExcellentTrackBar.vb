@@ -1083,8 +1083,6 @@ Public Class ExcellentTrackBar
 
         鼠标状态 = MouseStateEnum.Pressed
         Me.Focus()
-        正在拖动 = True
-        Me.Capture = True
 
         Dim thumbRect As RectangleF = 计算滑块矩形()
         If thumbRect.Contains(e.Location) Then
@@ -1095,8 +1093,11 @@ Public Class ExcellentTrackBar
             End If
         Else
             拖动偏移 = 0
+            ' 轨道点击先按配置播放到目标位置；后续 MouseMove 再切换为即时跟手。
             更新值从坐标(e.Location)
         End If
+        正在拖动 = True
+        Me.Capture = True
         请求GPU渲染()
     End Sub
 

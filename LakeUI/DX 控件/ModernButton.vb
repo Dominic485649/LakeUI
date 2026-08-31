@@ -415,9 +415,9 @@ Public Class ModernButton
         Pressed
     End Enum
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
-    Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me) With {.Duration = 1000}
+    Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me) With {.Duration = 300}
     Private ReadOnly 长按动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseInOut, .Duration = 800}
-    Private ReadOnly 涟漪动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseOut, .Duration = 1000}
+    Private ReadOnly 涟漪动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseOut, .Duration = 1200}
     Private 长按正在进行 As Boolean = False
     Private 长按上次失效进度 As Single = -1.0F
     Private 颜色动画已启用 As Boolean = False
@@ -691,15 +691,13 @@ Public Class ModernButton
         End Set
     End Property
 
-    <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(1000), Browsable(True)>
+    <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(300), Browsable(True)>
     Public Property AnimationDuration As Integer
         Get
             Return 动画助手.Duration
         End Get
         Set(value As Integer)
-            Dim duration = Math.Max(0, value)
-            动画助手.Duration = duration
-            涟漪动画助手.Duration = duration
+            动画助手.Duration = Math.Max(0, value)
         End Set
     End Property
 
@@ -1057,6 +1055,16 @@ Public Class ModernButton
 #End Region
 
 #Region "点击涟漪属性"
+    <Category("LakeUI"), Description("点击涟漪动画时长（毫秒）"), DefaultValue(1200), Browsable(True)>
+    Public Property RippleAnimationDuration As Integer
+        Get
+            Return 涟漪动画助手.Duration
+        End Get
+        Set(value As Integer)
+            涟漪动画助手.Duration = Math.Max(0, value)
+        End Set
+    End Property
+
     Private 点击涟漪已启用 As Boolean = True
     <Category("LakeUI"), Description("在非长按模式下启用点击涟漪动画"), DefaultValue(True), Browsable(True)>
     Public Property RippleEnabled As Boolean
