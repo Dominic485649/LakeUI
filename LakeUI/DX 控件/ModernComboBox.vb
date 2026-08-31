@@ -1952,10 +1952,10 @@ Public Class ModernComboBox
                 _alignItemDropdownY = bw + pad.Top + visIdx * itemH
 
                 Dim comboScreenPt As Point = owner.PointToScreen(New Point(0, 0))
-                ' Overlay 的锚点使用控件底边，避免动画从控件中线开始或结束。
-                Dim centerOffset As Integer = Math.Max(0, owner.Height - itemH)
+                ' Overlay 中选中项与控件主体垂直居中，收起终点也回到主体中心。
+                Dim centerOffset As Integer = Math.Max(0, (owner.Height - itemH) \ 2)
                 _alignItemScreenY = comboScreenPt.Y + centerOffset
-                _closeCenterScreenY = comboScreenPt.Y + owner.Height
+                _closeCenterScreenY = comboScreenPt.Y + owner.Height \ 2
                 _originPt = New Point(comboScreenPt.X, _alignItemScreenY - _alignItemDropdownY)
 
                 If _originPt.Y < scr.WorkingArea.Top Then
@@ -2145,10 +2145,13 @@ Public Class ModernComboBox
         End Sub
 
         Friend Sub 关闭并释放()
+            If Not IsDisposed Then
+                ' 先隐藏窗口，后续清理 Region/背景资源时不会把完整下拉层呈现出来。
+                Hide()
+            End If
             关闭工具提示()
             停止悬停动画()
             停止展开关闭驱动()
-            ClearAnimationClip()
             If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
             If 悬停计时器 IsNot Nothing Then 悬停计时器.Dispose()
             If _backdrop IsNot Nothing Then
@@ -2156,7 +2159,10 @@ Public Class ModernComboBox
                 _backdrop = Nothing
             End If
             Application.RemoveMessageFilter(Me)
-            If Not IsDisposed Then Close()
+            If Not IsDisposed Then
+                ClearAnimationClip()
+                Close()
+            End If
         End Sub
 
         Private Sub 展开关闭帧更新(sender As Object, e As EventArgs)
