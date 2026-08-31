@@ -223,7 +223,7 @@ Public Module D3D_D2DInterop
     ''' <summary>
     ''' 将全局抗锯齿与文本质量策略一次性应用到指定 RT。
     ''' 任何新建的 RT（DC RT 或 BitmapRT）都应在 BeginDraw 前调用一次。
-    ''' <see cref="D3D_PaintScope"/> 已在内部对 DC RT 与 SSAA BitmapRT 自动调用，控件作者通常无需手动调用。
+    ''' V5 呈现器已在内部对目标表面配置抗锯齿，控件作者通常无需手动调用。
     ''' </summary>
     Public Sub ApplyGlobalQuality(rt As ID2D1RenderTarget)
         If rt Is Nothing Then Return
@@ -350,7 +350,7 @@ Public Module D3D_D2DInterop
     ''' <summary>
     ''' 进程级 <see cref="ID2D1Factory1"/> 单例（SingleThreaded）。不要 Dispose。
     ''' <para>
-    ''' V3 兼容层把内部 factory 实例升级为 <c>ID2D1Factory1</c>，
+    ''' GPU 核心层把内部 factory 实例升级为 <c>ID2D1Factory1</c>，
     ''' 既不影响所有现有 <c>GetD2DFactory</c> 调用（ID2D1Factory1 派生自 ID2D1Factory），
     ''' 又能让 <see cref="D3D_DeviceGlobals"/> 通过 <c>CreateDevice(dxgiDevice)</c> 建出 D2D Device。
     ''' </para>
@@ -456,7 +456,7 @@ Public Module D3D_D2DInterop
 
     ''' <summary>
     ''' 把 GDI <see cref="Image"/> 上传为 <see cref="ID2D1Bitmap"/>（Premultiplied BGRA）。
-    ''' 调用方负责 Dispose。V3 每帧图片上传应通过 <see cref="D3D_ImageCache"/> 复用。
+    ''' 调用方负责 Dispose。GPU 每帧图片上传应通过 <see cref="D3D_ImageCache"/> 复用。
     ''' </summary>
     Public Function CreateBitmapFromImage(rt As ID2D1RenderTarget, img As Image) As ID2D1Bitmap
         If rt Is Nothing OrElse img Is Nothing Then Return Nothing

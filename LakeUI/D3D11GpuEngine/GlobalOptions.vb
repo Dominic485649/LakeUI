@@ -35,7 +35,7 @@ Public Class GlobalOptions
     ''' <remarks>
     ''' <para>默认值：OFF。</para>
     ''' <para>范围：OFF、x2、x3、x4。OFF 表示不强制全局倍率；x2/x3/x4 会在下一次控件重绘时作为全局 SSAA 设置参与计算。</para>
-    ''' <para>影响范围：整个 V3 控件绘制；控件自身 SuperSamplingScale 与 GlobalSSAA 取较高倍率。</para>
+    ''' <para>影响范围：整个 GPU 控件绘制；控件自身 SuperSamplingScale 与 GlobalSSAA 取较高倍率。</para>
     ''' <para>不影响范围：不改变 System.Drawing.Image / Bitmap 的原始尺寸、解码方式、RAM 常驻，也不改变 Image -&gt; D2D Bitmap 上传缓存预算；图片只是作为内容被绘制到当前图形层中。</para>
     ''' <para>性能影响：x2/x3/x4 的图形层离屏像素数约为 4/9/16 倍。</para>
     ''' </remarks>
@@ -143,7 +143,7 @@ Public Class GlobalOptions
 
     ''' <summary>进程级 GPU 缓存总预算。</summary>
     ''' <remarks>
-    ''' <para>默认值：256 MiB。用于统一约束 SSAA RT、Image D2D 上传、背景穿透 D2D 上传、Backdrop GPU 目标与 Markdown D2D 图片缓存。</para>
+    ''' <para>默认值：128 MiB。用于统一约束所有 GPU 缓存、控件表面、交换链缓冲和离屏目标。</para>
     ''' <para>预算按进程总量计算，不再按窗口、图片或背景源分别设置。</para>
     ''' </remarks>
     Public Shared Property GpuCacheBudgetBytes As Long = 128L * 1024L * 1024L
@@ -176,7 +176,7 @@ Public Class GlobalOptions
     Public Shared Property BackgroundFullDirtyRatio As Single = 0.6F
 
     ''' <summary>
-    ''' 当前 V3 per-control OnPaint 路线的 HDR 输出映射设置。
+    ''' 当前 GPU per-control OnPaint 路线的 HDR 输出映射设置。
     ''' 该路线不创建窗口级 swapchain；它在控件自己的 D2D 绘制与直接 Image 上传入口统一提升业务颜色。
     ''' 背景穿透采样像素保持原样回放，避免超容器背景映射被二次增强。
     ''' </summary>
@@ -222,7 +222,7 @@ Public Class GlobalOptions
         Private _revision As Integer
 
         ''' <summary>
-        ''' 是否启用当前 V3 per-control OnPaint 路线的 HDR 输出映射。
+        ''' 是否启用当前 GPU per-control OnPaint 路线的 HDR 输出映射。
         ''' </summary>
         ''' <remarks>
         ''' 默认值：False。启用后不会创建窗口级 swapchain，也不会绕过 WinForms 控件堆叠；HDR 只在 D2D 矢量颜色和直接 Image 上传入口做颜色提升。
@@ -352,7 +352,7 @@ Public Class GlobalOptions
     End Class
 
     ''' <summary>
-    ''' 当前 V3 per-control OnPaint 路线的全局 HDR 输出映射选项。
+    ''' 当前 GPU per-control OnPaint 路线的全局 HDR 输出映射选项。
     ''' </summary>
     ''' <remarks>
     ''' 该对象只控制 LakeUI 自身绘制和直接 Image 上传的颜色映射，不代表系统 HDR 开关，也不创建独立 HDR swapchain。

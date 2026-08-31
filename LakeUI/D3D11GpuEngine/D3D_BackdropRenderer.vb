@@ -14,7 +14,7 @@ Public Enum D3D_BackdropMode
 End Enum
 
 ''' <summary>
-''' Window-level GPU backdrop renderer used by V3 controls. Image mode runs fully through D2D:
+''' Window-level GPU backdrop renderer used by GPU controls. Image mode runs fully through D2D:
 ''' image texture -> optional Gaussian blur -> tint -> optional noise.
 ''' Auto and CaptionOnly remain reserved for a future Desktop Duplication path.
 ''' </summary>

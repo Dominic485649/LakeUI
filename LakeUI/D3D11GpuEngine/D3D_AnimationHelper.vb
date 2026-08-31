@@ -1,28 +1,28 @@
 Imports System.Threading
 
 ''' <summary>
-''' V3 动画核心：线程级统一调度器 + 控件级脏区失效。
+''' GPU 动画核心：线程级统一调度器 + 控件级脏区失效。
 '''
-''' === V3 迁移契约 ===
-''' 1. 所有控件的新动画必须接入 <see cref="V3_AnimationHelper"/>，不再为每个控件单独创建
+''' === GPU 路线契约 ===
+''' 1. 所有控件的新动画必须接入 <see cref="D3D_AnimationHelper"/>，不再为每个控件单独创建
 '''    <see cref="PrecisionTimer"/> 或直接订阅应用级空闲消息。同一 UI 线程内的所有
-'''    V3 helper 共享一个高精度调度器，由调度器统一驱动、统一批量失效。
+'''    GPU helper 共享一个高精度调度器，由调度器统一驱动、统一批量失效。
 ''' 2. <see cref="FPS"/> 语义：大于 0 表示控件自身帧率上限；等于 0 表示不做帧率上限，
 '''    但仍由共享 <see cref="PrecisionTimer"/> 驱动，不退回应用级空闲消息。
 ''' 3. 所有有滚动行为的控件必须提供 <c>AllowSmoothScroll</c> 属性，默认 False。滚动默认走普通
 '''    即时模式；当 AllowSmoothScroll=True 时才启用平滑滚动。平滑滚动帧率与控件自身
-'''    <c>AnimationFPS</c> 属性同步；没有该属性的滚动控件迁移 V3 时需要新增。
+'''    <c>AnimationFPS</c> 属性同步；没有该属性的滚动控件迁移 GPU 时需要新增。
 ''' 4. 控件必须通过 <see cref="DirtyRegionProvider"/> 或 <see cref="SetDirtyRectProvider"/> 声明
 '''    动画帧需要刷新的区域。Provider 可以请求整控件、一个或多个矩形、或跳过本帧失效。
 '''    调度器会按控件聚合这些请求，避免同一 tick 内重复 Invalidate。
-''' 5. V3 不以降低 SSAA 作为默认动画优化手段。SSAA 是高配置用户主动开启的质量选项，动画帧
+''' 5. GPU 不以降低 SSAA 作为默认动画优化手段。SSAA 是高配置用户主动开启的质量选项，动画帧
 '''    应尊重控件和全局 SSAA 设置。后续 SSAA 性能优化应优先放在 D2D/SSAA 离屏缓存层，例如
 '''    更长生命周期的 per-control/per-size render target、脏区回采、或可复用中间纹理，而不是
 '''    在动画核心里静默降级画质。
 ''' 6. 调度器暴露 <see cref="GetThreadSchedulerSnapshot"/> 供性能分析：可观察当前 driver、活跃
 '''    helper 数、tick 数、请求失效次数与实际 flush 次数。
 ''' </summary>
-Friend Class V3_AnimationHelper
+Friend Class D3D_AnimationHelper
     Implements IDisposable
 
     Public Enum EasingModeEnum
@@ -32,7 +32,7 @@ Friend Class V3_AnimationHelper
         EaseInOut
     End Enum
 
-    Public Delegate Sub DirtyRegionProvider(helper As V3_AnimationHelper, owner As Control, sink As InvalidateRegionSink)
+    Public Delegate Sub DirtyRegionProvider(helper As D3D_AnimationHelper, owner As Control, sink As InvalidateRegionSink)
 
     Public NotInheritable Class InvalidateRegionSink
         Private ReadOnly _rectangles As New List(Of Rectangle)()
@@ -421,7 +421,7 @@ Friend Class V3_AnimationHelper
         Private Const FullInvalidateAreaRatio As Double = 0.65
         Private Const MaxTimerIntervalMs As Integer = 16
 
-        Private ReadOnly _helpers As New List(Of V3_AnimationHelper)()
+        Private ReadOnly _helpers As New List(Of D3D_AnimationHelper)()
         Private ReadOnly _timer As New PrecisionTimer()
         Private ReadOnly _invalidations As New Dictionary(Of Control, InvalidationBucket)()
         Private _syncOwner As Control
@@ -449,14 +449,14 @@ Friend Class V3_AnimationHelper
             End If
         End Sub
 
-        Public Sub Register(helper As V3_AnimationHelper)
+        Public Sub Register(helper As D3D_AnimationHelper)
             If helper Is Nothing OrElse helper.Owner Is Nothing Then Return
             TouchSyncOwner(helper.Owner)
             If Not _helpers.Contains(helper) Then _helpers.Add(helper)
             Reconfigure()
         End Sub
 
-        Public Sub Unregister(helper As V3_AnimationHelper)
+        Public Sub Unregister(helper As D3D_AnimationHelper)
             If helper Is Nothing Then Return
             _helpers.Remove(helper)
             Reconfigure()
@@ -576,7 +576,7 @@ Friend Class V3_AnimationHelper
             Return Math.Max(1, Math.Min(MaxTimerIntervalMs, CInt(Math.Ceiling(remainingMs))))
         End Function
 
-        Public Sub RequestInvalidate(helper As V3_AnimationHelper)
+        Public Sub RequestInvalidate(helper As D3D_AnimationHelper)
             If helper Is Nothing Then Return
             Dim owner = helper.Owner
             If owner Is Nothing OrElse owner.IsDisposed OrElse Not owner.IsHandleCreated Then
@@ -677,12 +677,12 @@ Friend Class V3_AnimationHelper
                 End If
                 Try
                     If bucket.Full Then
-                        V3_InvalidationRouter.RequestRender(owner, New Rectangle(Point.Empty, owner.ClientSize))
+                        D3D_InvalidationRouter.RequestRender(owner, New Rectangle(Point.Empty, owner.ClientSize))
                         _flushedInvalidates += 1
                     Else
                         For Each rect In bucket.Rectangles
                             If rect.Width <= 0 OrElse rect.Height <= 0 Then Continue For
-                            V3_InvalidationRouter.RequestRender(owner, rect)
+                            D3D_InvalidationRouter.RequestRender(owner, rect)
                             _flushedInvalidates += 1
                         Next
                     End If

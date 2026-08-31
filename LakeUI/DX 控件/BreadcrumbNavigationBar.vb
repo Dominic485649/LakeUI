@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 ''' </summary>
 <DefaultEvent("ItemClicked")>
 Public Class BreadcrumbNavigationBar
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "节点定义与集合"
     ''' <summary>
@@ -45,7 +45,7 @@ Public Class BreadcrumbNavigationBar
         End Property
 
         Private Sub InvalidateOwner()
-            _owner?.请求V3渲染()
+            _owner?.请求GPU渲染()
         End Sub
 
         <Category("LakeUI"), Description("节点文本"), DefaultValue(GetType(String), "")>
@@ -346,7 +346,7 @@ Public Class BreadcrumbNavigationBar
             Dim oldIdx As Integer = _selectedIndex
             _selectedIndex = v
             Dim newItem As BreadcrumbItem = If(v >= 0 AndAlso v < _items.Count, _items(v), Nothing)
-            请求V3渲染()
+            请求GPU渲染()
             RaiseEvent SelectedIndexChanged(Me, New BreadcrumbSelectionChangedEventArgs(oldIdx, v, newItem))
         End Set
     End Property
@@ -403,7 +403,7 @@ Public Class BreadcrumbNavigationBar
             If 溢出根文本 = v Then Return
             溢出根文本 = v
             _overflowItem.Text = v
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -579,7 +579,7 @@ Public Class BreadcrumbNavigationBar
 
     Private 超采样倍率 As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -590,7 +590,7 @@ Public Class BreadcrumbNavigationBar
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
+     Description("背景采样源。设置后记录关联源控件；GPU 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -599,10 +599,15 @@ Public Class BreadcrumbNavigationBar
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 
 #End Region
 
@@ -639,22 +644,22 @@ Public Class BreadcrumbNavigationBar
         _pressedNodeIndex = -2
         If _selectedIndex >= _items.Count Then _selectedIndex = -1
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 
 #Region "布局"
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub RebuildLayout()
@@ -809,7 +814,7 @@ Public Class BreadcrumbNavigationBar
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         RebuildLayout()
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
@@ -828,7 +833,7 @@ Public Class BreadcrumbNavigationBar
         DrawNodesText_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -956,7 +961,7 @@ Public Class BreadcrumbNavigationBar
             _hoverNodeIndex = newHoverIdx
             _hoverIsArrow = isArrow
             Cursor = If(hit, Cursors.Hand, Cursors.Default)
-            请求V3渲染()
+            请求GPU渲染()
         End If
 
         ' 更新 ToolTip
@@ -986,7 +991,7 @@ Public Class BreadcrumbNavigationBar
             _hoverNodeIndex = -2
             _hoverIsArrow = False
             Cursor = Cursors.Default
-            请求V3渲染()
+            请求GPU渲染()
         End If
         If _toolTip IsNot Nothing Then
             _toolTip.SetToolTip(Me, String.Empty)
@@ -1003,7 +1008,7 @@ Public Class BreadcrumbNavigationBar
         If HitTest(e.Location, idx, isArrow, isOverflow) Then
             _pressedNodeIndex = idx
             _pressedIsArrow = isArrow
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1018,7 +1023,7 @@ Public Class BreadcrumbNavigationBar
         Dim wasPressedArrow As Boolean = _pressedIsArrow
         _pressedNodeIndex = -2
         _pressedIsArrow = False
-        请求V3渲染()
+        请求GPU渲染()
         If hit AndAlso idx = wasPressedIdx AndAlso isArrow = wasPressedArrow Then
             If isOverflow Then
                 ' 溢出根：无论点的是文本还是箭头，都展开折叠列表
@@ -1077,7 +1082,7 @@ Public Class BreadcrumbNavigationBar
         Dim anchorRect As Rectangle = GetDropDownAnchorRect(arrowIndex)
         Dim pt As Point = PointToScreen(New Point(anchorRect.Left, Height))
         _activeDropDownMenu.Show(pt.X, pt.Y)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Function GetDropDownMenu(arrowIndex As Integer) As ModernContextMenu
@@ -1114,7 +1119,7 @@ Public Class BreadcrumbNavigationBar
             menu.Close()
         Catch
         End Try
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub DropDownMenu_MenuClosed(sender As Object, e As EventArgs)
@@ -1122,7 +1127,7 @@ Public Class BreadcrumbNavigationBar
         If menu IsNot Nothing Then RemoveHandler menu.MenuClosed, AddressOf DropDownMenu_MenuClosed
         _activeDropDownMenu = Nothing
         _dropDownArrowIndex = -2
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 
@@ -1130,30 +1135,30 @@ Public Class BreadcrumbNavigationBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled AndAlso _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 

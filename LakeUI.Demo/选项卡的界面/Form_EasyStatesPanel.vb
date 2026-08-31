@@ -11,7 +11,7 @@ Public Class Form_EasyStatesPanel
         Try
             EasyStatesPanel1.Items.Clear()
             EasyStatesPanel1.Items.Add("构建", "net10.0-windows / Debug")
-            EasyStatesPanel1.Items.Add("渲染", "V3 GPU 已就绪")
+            EasyStatesPanel1.Items.Add("渲染", "GPU GPU 已就绪")
             EasyStatesPanel1.Items.Add("动画", "可选平滑滚动")
             EasyStatesPanel1.Items.Add("主题", "窗口级 GPU 合成")
             EasyStatesPanel1.Items.Add("缓存", "文本格式缓存命中")

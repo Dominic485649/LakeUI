@@ -1,24 +1,26 @@
 # LakeUI D3D11 GPU Engine
 
-此目录是 LakeUI 新主版本 GPU 渲染核心的唯一新增区域。V3 核心、兼容辅助与迁移中的渲染工具文件统一放在本目录根级；当前运行时主链路是 WinForms per-control `OnPaint` + `D3D_PaintBridge`。
+此目录是 LakeUI V5 GPU 渲染核心的唯一实现区域；当前运行时主链路是 per-control V5 HWND swap-chain，`OnPaint` 仅负责触发首次/恢复呈现。
 
 ## 主链路
 
 当前有效路线是：
 
-`Control.OnPaint` -> `D3D_PaintBridge.PaintRenderable` -> `D3D_PaintScope.CreateContext` -> `V3_IGpuRenderable.RenderGpu` -> `D3D_PaintScope.Dispose` 合成回当前 Paint HDC。
+V5 控件：`Control.OnPaint` -> `D3D_PaintBridge.PaintRenderable` -> `D3D_V5Presentation.Paint` -> `D3D_ControlSurface` -> `D3D_IGpuRenderable.RenderGpu` -> `D3D_HwndSwapChainPresenter.Present(0)`。
+
+V5 不提供 HDC/Graphics 兼容桥；未迁移的原生控件继续使用 WinForms 自身绘制，不会进入 GPU 引擎。
 
 关键约定：
 
 - 每个控件只绘制自身坐标系内的像素；父子、兄弟和整窗重绘只通过 WinForms invalidation 合并。
 - `RenderGpu` 只能使用传入的 `D3D_PaintContext`。不要缓存 context、device context、brush、bitmap、geometry、text format。
-- 控件状态变化调用 `V3_InvalidationRouter.RequestRender`；它会进入 `OuterToInnerRefreshScheduler` 合并并按外到内顺序刷新。不要直接 `Update`，也不要触发旧的整树刷新。
+- 控件状态变化调用 `D3D_InvalidationRouter.RequestRender`；它会进入 `OuterToInnerRefreshScheduler` 合并并按外到内顺序刷新。不要直接 `Update`，也不要触发旧的整树刷新。
 - `D3D_WindowCompositor` 只保留 Form 级共享缓存、文字/图片/Backdrop 服务和设备失效协调，不再创建 swapchain 或渲染整窗。
 
 ## 当前核心边界
 
-- `D3D_` 类型负责 D3D11/DXGI/D2D1.1/DirectWrite、Form 级共享 GPU 缓存、文字、背景穿透、Backdrop 和最终 D3D->HDC 合成。
-- `V3_` 类型只描述后续控件迁移契约、DPI、失效路由、树遍历和迁移标记，不隐藏 GPU 资源创建。
+- `D3D_` 类型负责 D3D11/DXGI/D2D1.1/DirectWrite、Form 级共享 GPU 缓存、文字、背景穿透、Backdrop 以及 V5 swap-chain 呈现；D3D->HDC 合成只属于兼容桥。
+- `D3D_` 类型负责控件契约、DPI、失效路由、树遍历和 GPU 资源生命周期。
 - 已迁移控件必须在自己的 `OnPaint` 中输出像素；状态变化只请求 `Invalidate`，不主动绘制整窗。
 - 旧的窗口级 swap-chain/render-host/full-tree compositor、HDR 子交换链镜像、DirectComposition 宿主和窗口级背景 snapshot 路线已从代码中移除。
 
@@ -38,11 +40,11 @@
 
 ## 控件迁移规则
 
-后续控件只允许通过 `V3_IGpuRenderable.RenderGpu(context As D3D_PaintContext)` 绘制当前控件自身，并通过 `V3_InvalidationRouter.RequestRender` 请求刷新。
+后续控件只允许通过 `D3D_IGpuRenderable.RenderGpu(context As D3D_PaintContext)` 绘制当前控件自身，并通过 `D3D_InvalidationRouter.RequestRender` 请求刷新。
 
 禁止事项：
 
-- 控件 `RenderGpu` 不得调用 `Graphics.GetHdc`、`BitBlt`、`PaintEventArgs`、旧 `PaintScopeV2` 或旧背景穿透路径；最终 HDC 合成只允许在 `D3D_PaintScope` 内部完成。
+- 控件 `RenderGpu` 不得调用 `Graphics.GetHdc`、`BitBlt`、`PaintEventArgs` 或创建 HDC 目标。
 - 不得自行创建 D3D/D2D/DXGI/DirectWrite device、factory、swap chain 或 render target。
 - 不得持有跨帧 `ID2D1Brush`、`ID2D1Bitmap`、`ID2D1Geometry`、`IDWriteTextFormat` 等 GPU/DirectWrite 对象；长期资源必须交给 `D3D_` 缓存。
 - 不得在控件内提交 `Present`、创建 swapchain 或 DirectComposition 宿主。
@@ -58,7 +60,7 @@
 
 ## 几何与 DPI
 
-- 所有公开外观尺寸默认是逻辑像素；绘制前通过 `V3_DpiContext` 或所属模块的 DPI helper 转换。
+- 所有公开外观尺寸默认是逻辑像素；绘制前通过 `D3D_DpiContext` 或所属模块的 DPI helper 转换。
 - 边框按 D2D 中心线绘制。填充背景若要和边框视觉外缘一致，应使用与边框相同的中心线矩形，或显式使用 inset helper。
 - `Padding` 参与文本/内容布局时必须和边框宽度一起计算：`content = bounds - border - padding`。
 - 顶层 popup/tooltip 在句柄创建前不要从自身读取 DPI；应优先使用锚点控件或 owner form 的 DPI。
@@ -66,9 +68,9 @@
 
 ## 背景与 Backdrop
 
-`D3D_BackgroundPenetration` 是当前唯一背景穿透主链路。它只在显式 `BackgroundSource` 存在时采样 source，使用 CPU backing bitmap + D2D 上传缓存绘制到当前控件 paint scope，不生成窗口级 GPU snapshot，也不递归绘制整棵控件树。
+`D3D_ControlSurfaceRegistry` 是当前唯一背景穿透主链路。它只采样 source 的持久 GPU surface，不创建 CPU backing bitmap，不生成窗口级截图。
 
-Form 级 HDR/swapchain 呈现后端已移除，不再保留 `EnableHdrForForm`、HDR 状态查询或交换链验证入口。当前 HDR 只作为 V3 per-control OnPaint 路线的输出映射存在：业务颜色和直接 Image 上传可按 `GlobalOptions.HDR` 提升，背景穿透采样像素保持原样回放，避免超容器背景映射被二次增强。
+Form 级 HDR/swapchain 呈现后端已移除，不再保留 `EnableHdrForForm`、HDR 状态查询或交换链验证入口。当前 HDR 只作为 V5 per-control 输出映射存在。
 
 HDR 映射强度使用常见显示档位配置，不再直接暴露曝光/饱和度系数；默认值为 `HDR400`，可选 `HDR200` 到 `HDR1000` 的每 100 档位：
 
@@ -90,9 +92,9 @@ GlobalOptions.HDR.Profile = GlobalOptions.HdrOutputProfile.HDR400
 
 ## 窗口铬与对话框
 
-`ThisIsYourWindow` 挂接普通 Form 时，WinForms `Paint` 事件可以绘制标题栏。但 Form 自身若实现 `V3_IGpuRenderable` 并在 `OnPaint` 成功后不调用 `MyBase.OnPaint`，挂接的 Paint 事件不会再执行。
+`ThisIsYourWindow` 挂接普通 Form 时，WinForms `Paint` 事件可以绘制标题栏。但 Form 自身若实现 `D3D_IGpuRenderable` 并在 `OnPaint` 成功后不调用 `MyBase.OnPaint`，挂接的 Paint 事件不会再执行。
 
-这类窗体必须在自身 `RenderGpu` 内调用 `ThisIsYourWindow.TryRenderAttachedChrome(context, Me)`，让标题栏、按钮和边框进入同一次 V3 paint pass。客户区底色不能因为 `Padding` 被标题栏占用就跳过，只有 `ThisIsYourWindow.AttachedBackdropCoversClient(Me)` 为 True 时才可保持透明。
+这类窗体必须在自身 `RenderGpu` 内调用 `ThisIsYourWindow.TryRenderAttachedChrome(context, Me)`，让标题栏、按钮和边框进入同一次 V5 paint pass。客户区底色不能因为 `Padding` 被标题栏占用就跳过，只有 `ThisIsYourWindow.AttachedBackdropCoversClient(Me)` 为 True 时才可保持透明。
 
 ## Popup 与浮动提示
 
@@ -100,19 +102,19 @@ GlobalOptions.HDR.Profile = GlobalOptions.HdrOutputProfile.HDR400
 - popup 的 DPI 应来自 owner/anchor；句柄创建前自身 DPI 常常还不可靠。
 - popup 的边框、圆角、padding、最大宽度、锚点间距、动画位移都按逻辑像素定义，显示前统一缩放。
 - 边框要么按中心线 inset 后绘制，要么用填充四边，避免高 DPI 下半条边落到窗口外。
-- popup backdrop 使用 `D3D_PopupBackdropRenderer` 或 V3 image backdrop；不要复用宿主 `ThisIsYourWindow` 的帧。
+- popup backdrop 使用 `D3D_PopupBackdropRenderer` 的 GPU image backdrop；不要复用宿主 `ThisIsYourWindow` 的帧。
 
 ## WrongFactory 坑点
 
-D2D 对象必须来自同一个 factory/device context 家族。典型错误是：用旧 V2 helper 创建 geometry/brush/text format，再交给 V3 device context 绘制，最终在 `EndDraw` 或 scope dispose 抛 `D2DERR_WRONG_FACTORY`。
+D2D 对象必须来自同一个 factory/device context 家族。典型错误是：用旧 helper 创建 geometry/brush/text format，再交给 V5 device context 绘制，最终在 `EndDraw` 抛 `D2DERR_WRONG_FACTORY`。
 
 规则：
 
-- V3 绘制使用 `D3D_RenderCore.DeviceManager.D2DFactory` 创建短期 geometry。
+- V5 绘制使用 `D3D_RenderCore.DeviceManager.D2DFactory` 创建短期 geometry。
 - brush 走 `context.Compositor.BrushCache.GetSolidBrush(...)`。
 - text 走 `context.DrawText` / `D3D_TextRenderer`。
 - 图片走 `context.DrawImage` / compositor image cache。
-- 旧 `D3D_D2DInterop.GetD2DFactory()` 仅用于兼容测量或旧 D2D 路径，不能和 V3 `ID2D1DeviceContext` 交叉使用。
+- 旧 `D3D_D2DInterop.GetD2DFactory()` 仅用于测量，不能和 V5 `ID2D1DeviceContext` 交叉使用。
 
 ## 文字路线
 

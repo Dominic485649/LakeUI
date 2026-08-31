@@ -197,7 +197,7 @@ End Module
 
 Friend Class ExInputBoxForm
     Inherits Form
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
 #Region "Win32"
 
@@ -374,7 +374,7 @@ Friend Class ExInputBoxForm
         End If
 
         ' DPI 缩放
-        SC = V3_DpiContext.FromControl(Me).Scale
+        SC = D3D_DpiContext.FromControl(Me).Scale
         缩放常量()
 
         ' 字体
@@ -573,7 +573,7 @@ Friend Class ExInputBoxForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: dialog pixels are emitted by RenderGpu.
+        ' GPU-only: dialog pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
@@ -586,7 +586,7 @@ Friend Class ExInputBoxForm
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
@@ -614,17 +614,17 @@ Friend Class ExInputBoxForm
             主题.FormBorderColor, 1.0F)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
 #End Region
@@ -635,7 +635,7 @@ Friend Class ExInputBoxForm
         MyBase.OnMouseDown(e)
         If 关闭按钮区域.Contains(e.Location) Then
             关闭按下 = True
-            RequestV3Render(关闭按钮区域)
+            RequestGpuRender(关闭按钮区域)
         ElseIf 标题栏区域.Contains(e.Location) AndAlso Not 关闭按钮区域.Contains(e.Location) Then
             ReleaseCapture()
             SendMessage(Me.Handle, WM_NCLBUTTONDOWN, New IntPtr(HT_CAPTION), IntPtr.Zero)
@@ -651,7 +651,7 @@ Friend Class ExInputBoxForm
     Private Sub 刷新毛玻璃背景()
         If IsDisposed OrElse Not IsHandleCreated Then Return
         毛玻璃?.Prepare()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -660,7 +660,7 @@ Friend Class ExInputBoxForm
             执行取消()
         End If
         关闭按下 = False
-        RequestV3Render(关闭按钮区域)
+        RequestGpuRender(关闭按钮区域)
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -668,7 +668,7 @@ Friend Class ExInputBoxForm
         Dim hovered As Boolean = 关闭按钮区域.Contains(e.Location)
         If hovered <> 关闭悬停 Then
             关闭悬停 = hovered
-            RequestV3Render(关闭按钮区域)
+            RequestGpuRender(关闭按钮区域)
         End If
     End Sub
 
@@ -677,7 +677,7 @@ Friend Class ExInputBoxForm
         If 关闭悬停 OrElse 关闭按下 Then
             关闭悬停 = False
             关闭按下 = False
-            RequestV3Render(关闭按钮区域)
+            RequestGpuRender(关闭按钮区域)
         End If
     End Sub
 

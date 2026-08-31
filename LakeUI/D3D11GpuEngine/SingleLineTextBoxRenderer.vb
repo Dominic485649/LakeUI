@@ -19,7 +19,7 @@ Imports Vortice.Direct2D1
 ''' • 光标/选区列索引按 .NET 字符索引处理，不做 grapheme cluster 分割；组合 emoji、复杂脚本
 '''   的光标移动可能不是专业文本编辑器语义。
 ''' • IME 合成窗口位置由外层控件配合 <see cref="ImeHelper"/> 设置，本类只处理已经提交的文本。
-''' • 绘制只通过 <see cref="DrawGpu"/> 进入当前 V3 绘制上下文。
+''' • 绘制只通过 <see cref="DrawGpu"/> 进入当前 GPU 绘制上下文。
 ''' </remarks>
 Public Class SingleLineTextBoxRenderer
     Implements IDisposable
@@ -145,7 +145,9 @@ Public Class SingleLineTextBoxRenderer
     End Property
 
     Public Sub SetText(value As String, Optional caretColumn As Integer = -1,
-                       Optional resetScroll As Boolean = False, Optional raiseTextChanged As Boolean = True)
+                       Optional resetScroll As Boolean = False,
+                       Optional raiseTextChanged As Boolean = True,
+                       Optional requestOwnerInvalidation As Boolean = True)
         Dim v As String = If(value, String.Empty)
         Dim changed As Boolean = _text <> v
         If Not changed AndAlso caretColumn < 0 AndAlso Not resetScroll Then Return
@@ -159,7 +161,7 @@ Public Class SingleLineTextBoxRenderer
         If resetScroll Then _scrollXOffset = 0
         ClearSelection(False)
         EnsureCaretVisible()
-        InvalidateOwner()
+        If requestOwnerInvalidation Then InvalidateOwner()
         If changed AndAlso raiseTextChanged Then RaiseEvent TextChanged(_owner, EventArgs.Empty)
     End Sub
 
@@ -517,7 +519,7 @@ Public Class SingleLineTextBoxRenderer
 
     Private Function DpiScale() As Single
         If DpiScaleProvider IsNot Nothing Then Return Math.Max(0.01F, DpiScaleProvider.Invoke())
-        Return V3_DpiContext.FromControl(_owner).Scale
+        Return D3D_DpiContext.FromControl(_owner).Scale
     End Function
 
     Private Function IsFocused() As Boolean
@@ -529,7 +531,7 @@ Public Class SingleLineTextBoxRenderer
         If InvalidateAction IsNot Nothing Then
             InvalidateAction.Invoke()
         Else
-            V3_InvalidationRouter.RequestRender(_owner, New Rectangle(Point.Empty, _owner.Size))
+            D3D_InvalidationRouter.RequestRender(_owner, New Rectangle(Point.Empty, _owner.Size))
         End If
     End Sub
 

@@ -15,10 +15,10 @@ Imports Vortice.Direct2D1
 '''
 ''' 缓存与坑点：
 ''' • 调用方已经有 scope.Compositor.BrushCache 时应传入它，让窗口级缓存统一管理。
-''' • 本类不再持有 D2D 画刷，ReleaseEverything 不需要额外扫描 V3_ScrollBarRenderer 实例。
+''' • 本类不再持有 D2D 画刷，ReleaseEverything 不需要额外扫描 D3D_ScrollBarRenderer 实例。
 ''' • 本类只管理滚动条交互状态，不持有内容滚动偏移；真实 offset 必须由宿主控件保存。
 ''' </remarks>
-Public Class V3_ScrollBarRenderer
+Public Class D3D_ScrollBarRenderer
     ''' <summary>当前帧滑块（thumb）在容器坐标系下的矩形。</summary>
     Public ThumbRect As Rectangle = Rectangle.Empty
     ''' <summary>当前帧轨道（track）在容器坐标系下的矩形，覆盖了 Margin 命中区。</summary>

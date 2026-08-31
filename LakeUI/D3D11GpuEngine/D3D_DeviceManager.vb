@@ -16,12 +16,13 @@ Imports Vortice.DXGI
 ''' </para>
 ''' <para>
 ''' 线程边界：创建设备使用内部锁保护；D2D device context 只能在 UI 线程绘制调用中使用。
-''' 后续控件迁移时不得直接使用 Graphics.GetHdc、不得自建 D3D device，也不得绕过 D3D_WindowCompositor 获取绘制入口。
+''' V5 控件不得使用 Graphics.GetHdc、不得自建 D3D device，只能通过 D3D_V5Presentation 获取绘制入口。
 ''' </para>
 ''' <para>
 ''' 设备丢失边界：驱动更新、TDR、显示适配器重置、休眠恢复、远程桌面切换等都按同一套 device lost 流程处理。
 ''' 本类只释放进程级资源并广播失效；窗口级资源由各自 compositor 在 UI 线程释放，随后按需重建。
-''' 窗口级 swapchain 和 DirectComposition 宿主路线已移除；当前只通过 per-control paint scope 回贴到 WinForms HDC。
+''' V5 使用 per-control HWND flip-model swapchain；标记为 V5-MIGRATION-REMOVE 的 HDC paint scope
+''' 仅保留给 ThisIsYourWindow 顶层 chrome 兼容保护和显式 GPU 调用。
 ''' </para>
 ''' </summary>
 Public NotInheritable Class D3D_DeviceManager
@@ -155,6 +156,8 @@ Public NotInheritable Class D3D_DeviceManager
         End SyncLock
 
         If Not hadDevice Then Return
+
+        D3D_RenderDiagnostics.V5DeviceLost()
 
         Try
             RaiseEvent DeviceLost(Me, EventArgs.Empty)

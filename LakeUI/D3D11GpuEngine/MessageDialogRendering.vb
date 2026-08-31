@@ -93,18 +93,6 @@ Friend NotInheritable Class MessageDialogBackdropController
         Return _backdrop.WaitForFrame(timeoutMilliseconds)
     End Function
 
-    Public Sub Draw(g As Graphics)
-        Draw(g, New Rectangle(Point.Empty, _host.ClientSize))
-    End Sub
-
-    Public Sub Draw(g As Graphics, target As Rectangle)
-        ' V3-only: pixels are emitted by RenderGpu.
-    End Sub
-
-    Public Sub DrawRounded(g As Graphics, target As Rectangle, radius As Single)
-        ' V3-only: pixels are emitted by RenderGpu.
-    End Sub
-
     Public Function Draw(context As D3D_PaintContext, target As RectangleF) As Boolean
         If Not Enabled OrElse _backdrop Is Nothing Then Return False
         Return _backdrop.Draw(context, target)

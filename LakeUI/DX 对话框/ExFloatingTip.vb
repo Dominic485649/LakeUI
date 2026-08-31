@@ -137,7 +137,7 @@ End Module
 ''' </summary>
 Friend Class ExFloatingTipForm
     Inherits PopupForm
-    Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements IMessageFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
 #Region "Win32"
 
@@ -293,7 +293,7 @@ Friend Class ExFloatingTipForm
                 Me.Location = 最终位置
                 停止动画()
                 毛玻璃?.Prepare()
-                RequestV3Render()
+                RequestGpuRender()
                 启动自动关闭()
             End If
         ElseIf 正在关闭动画 Then
@@ -431,20 +431,20 @@ Friend Class ExFloatingTipForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: tip pixels are emitted by RenderGpu.
+        ' GPU-only: tip pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         毛玻璃?.Prepare()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
@@ -468,24 +468,24 @@ Friend Class ExFloatingTipForm
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Shared Function ResolveDpiScale(anchor As Control) As Single
         ' Popup 构造时自身句柄通常还没创建；优先继承锚点或活动窗口 DPI。
-        If anchor IsNot Nothing AndAlso Not anchor.IsDisposed Then Return V3_DpiContext.FromControl(anchor).Scale
+        If anchor IsNot Nothing AndAlso Not anchor.IsDisposed Then Return D3D_DpiContext.FromControl(anchor).Scale
         Dim active = Form.ActiveForm
-        If active IsNot Nothing AndAlso Not active.IsDisposed Then Return V3_DpiContext.FromControl(active).Scale
+        If active IsNot Nothing AndAlso Not active.IsDisposed Then Return D3D_DpiContext.FromControl(active).Scale
         Return 1.0F
     End Function
 

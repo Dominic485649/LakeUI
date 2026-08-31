@@ -2,9 +2,8 @@ Imports Microsoft.Win32
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' Form 级 V3 资源容器。
-''' 当前唯一主链路是 WinForms per-control OnPaint + D3D_PaintScope；本类只持有共享缓存、
-''' 文字/图片/Backdrop 服务和设备失效协调，不创建 swapchain、不渲染整窗、不管理子 HWND 透明转发。
+''' Form 级共享 GPU 资源容器。V5 HWND presenter 与迁移期 GPU HDC scope 共用这里的
+''' 文字、图片、画刷、几何及 Backdrop 缓存；交换链仍由每控件 D3D_HwndSwapChainPresenter 独立拥有。
 ''' </summary>
 Public NotInheritable Class D3D_WindowCompositor
     Implements D3D_IRenderCacheOwner, IDisposable
@@ -394,7 +393,11 @@ Public NotInheritable Class D3D_WindowCompositor
 
         Try
             If _form.IsHandleCreated Then
-                OuterToInnerRefreshScheduler.RequestFull(_form, invalidateChildren:=True)
+                ' The form itself is not a V5 surface. Its native child HWNDs
+                ' must keep their own WinForms paint lifecycle; V5 controls
+                ' request their own surfaces through geometry/invalidation
+                ' notifications and do not need a form-wide child expansion.
+                OuterToInnerRefreshScheduler.RequestFull(_form, invalidateChildren:=False)
             Else
                 _form.Invalidate(True)
             End If

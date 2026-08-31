@@ -1,7 +1,7 @@
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
 
-''' <summary>公开 DirectWrite 文本测量服务；V3 绘制统一由 D3D_TextRenderer 完成。</summary>
+''' <summary>公开 DirectWrite 文本测量服务；GPU 绘制统一由 D3D_TextRenderer 完成。</summary>
 ''' <remarks>
 ''' 本模块只提供测量与布局计算，不包含 RenderTarget、画刷或文字绘制 API。
 ''' </remarks>

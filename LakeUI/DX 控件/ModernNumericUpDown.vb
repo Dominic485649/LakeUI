@@ -5,7 +5,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("ValueChanged")>
 Public Class ModernNumericUpDown
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Public Event ValueChanged As EventHandler
     Public Shadows Event TextChanged As EventHandler
@@ -84,7 +84,7 @@ Public Class ModernNumericUpDown
             最小值 = value
             If 最大值 < 最小值 Then 最大值 = 最小值
             SetValueCore(当前值, True, True)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -99,7 +99,7 @@ Public Class ModernNumericUpDown
             最大值 = value
             If 最小值 > 最大值 Then 最小值 = 最大值
             SetValueCore(当前值, True, True)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -157,7 +157,7 @@ Public Class ModernNumericUpDown
             If 小数位数 = value Then Return
             小数位数 = value
             SetValueCore(当前值, True, True)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -170,7 +170,7 @@ Public Class ModernNumericUpDown
             If _textRenderer.Editable = value Then Return
             _textRenderer.Editable = value
             Cursor = Cursors.Default
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -236,7 +236,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.ForeColor = value Then Return
             _textRenderer.ForeColor = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -247,7 +247,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             _textRenderer.LineHeight = Math.Max(10, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -258,7 +258,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             _textRenderer.CaretWidth = Math.Max(1, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -270,7 +270,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.CaretColor = value Then Return
             _textRenderer.CaretColor = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -282,7 +282,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.SelectionColor = value Then Return
             _textRenderer.SelectionColor = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -317,7 +317,7 @@ Public Class ModernNumericUpDown
         Set(value As Integer)
             边框宽度 = Math.Max(0, value)
             SyncTextRendererLayout()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -329,7 +329,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             边框圆角半径 = Math.Max(0, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -347,7 +347,7 @@ Public Class ModernNumericUpDown
         Set(value As TextAlignMode)
             If CType(_textRenderer.TextAlign, TextAlignMode) = value Then Return
             _textRenderer.TextAlign = CType(value, SingleLineTextBoxRenderer.TextAlignMode)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -358,7 +358,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As String)
             _textRenderer.WaterText = If(value, "")
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -370,13 +370,13 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.WaterTextForeColor = value Then Return
             _textRenderer.WaterTextForeColor = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -473,7 +473,7 @@ Public Class ModernNumericUpDown
         Set(value As Integer)
             按钮区域宽度 = Math.Max(1, value)
             SyncTextRendererLayout()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -584,7 +584,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             箭头大小 = Math.Max(4, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -607,12 +607,12 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             分隔线宽度 = Math.Max(0, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 #End Region
 
-#Region "V3 背景穿透"
+#Region "GPU 背景穿透"
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
      Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
@@ -624,10 +624,15 @@ Public Class ModernNumericUpDown
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 #End Region
 
 #Region "绘制"
@@ -640,7 +645,7 @@ Public Class ModernNumericUpDown
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
@@ -678,7 +683,7 @@ Public Class ModernNumericUpDown
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -962,7 +967,7 @@ Public Class ModernNumericUpDown
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -970,7 +975,7 @@ Public Class ModernNumericUpDown
         鼠标状态 = MouseStateEnum.Normal
         _hoverButton = SpinButtonPart.None
         If _pressedButton = SpinButtonPart.None Then Cursor = Cursors.Default
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -985,14 +990,14 @@ Public Class ModernNumericUpDown
                 _pressedButton = part
                 StepByButton(part)
                 StartRepeatTimer()
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
             If Editable Then
                 _mouseDownSelecting = True
                 _textRenderer.BeginMouseSelection(e.X)
             End If
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1005,7 +1010,7 @@ Public Class ModernNumericUpDown
         If _mouseDownSelecting AndAlso e.Button = MouseButtons.Left AndAlso Editable Then
             _textRenderer.UpdateMouseSelection(e.X)
         ElseIf prevHover <> _hoverButton Then
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1016,7 +1021,7 @@ Public Class ModernNumericUpDown
         StopRepeatTimer()
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
         _hoverButton = HitTestButton(e.Location)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1063,7 +1068,7 @@ Public Class ModernNumericUpDown
     Private Sub StepValue(delta As Double)
         Dim nextValue As Double = NumericValuePrecision.AddStep(当前值, delta)
         SetValueCore(NumericValuePrecision.RemoveStepNoise(nextValue, 最小值, Math.Abs(delta)), True, False)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub SetValueCore(value As Double, updateText As Boolean, forceTextUpdate As Boolean)
@@ -1218,16 +1223,16 @@ Public Class ModernNumericUpDown
     End Property
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub SyncTextRendererLayout()
@@ -1238,7 +1243,7 @@ Public Class ModernNumericUpDown
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 #End Region
@@ -1256,21 +1261,21 @@ Public Class ModernNumericUpDown
         _mouseDownSelecting = False
         _pressedButton = SpinButtonPart.None
         StopRepeatTimer()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         SyncTextRendererLayout()
         _textRenderer.EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         SyncTextRendererLayout()
         _textRenderer.EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
@@ -1282,12 +1287,12 @@ Public Class ModernNumericUpDown
             _pressedButton = SpinButtonPart.None
             StopRepeatTimer()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 

@@ -6,10 +6,10 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("TextChanged")>
 Public Class ModernTextBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "D3D 资源"
-    ' V3：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
+    ' GPU：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
     Public Shadows Event TextChanged As EventHandler
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
@@ -107,7 +107,7 @@ Public Class ModernTextBox
     Private _scrollLineOffset As Integer = 0
     Private _scrollPixelOffset As Single = 0.0F
     Private _scrollTargetPixelOffset As Single = 0.0F
-    Private ReadOnly _scrollAnimationHelper As New V3_AnimationHelper(Me)
+    Private ReadOnly _scrollAnimationHelper As New D3D_AnimationHelper(Me)
     Private _scrollAnimationRunning As Boolean = False
     Private _scrollAnimationLastTicks As Long = 0
     Private _scrollAnimationLastPaintOffset As Single = Single.NaN
@@ -115,7 +115,7 @@ Public Class ModernTextBox
     Private _allowSmoothScroll As Boolean = False
     Private _scrollXOffset As Integer = 0
     Private _scrollBarVisible As Boolean = False
-    Private _scrollBar As New V3_ScrollBarRenderer()
+    Private _scrollBar As New D3D_ScrollBarRenderer()
     Private _mouseDownSelecting As Boolean = False
     Private _imeComposing As Boolean = False
     Private _visualLines As New List(Of VisualLineInfo)
@@ -183,7 +183,7 @@ Public Class ModernTextBox
                 SetScrollPixelOffset(savedScrollY)
                 _scrollXOffset = savedScrollX
                 UpdateScrollBar()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -226,7 +226,7 @@ Public Class ModernTextBox
             行高 = Math.Max(10, value)
             UpdateDpiCache()
             RefreshVisualLayout(True)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -239,7 +239,7 @@ Public Class ModernTextBox
         Set(value As Integer)
             光标线宽 = Math.Max(1, value)
             UpdateDpiCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -298,7 +298,7 @@ Public Class ModernTextBox
                 边框宽度 = value
                 UpdateDpiCache()
                 RefreshVisualLayout(True)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -324,7 +324,7 @@ Public Class ModernTextBox
             If 启用多行 <> value Then
                 启用多行 = value
                 RefreshVisualLayout(True)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -393,7 +393,7 @@ Public Class ModernTextBox
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -467,7 +467,7 @@ Public Class ModernTextBox
             If 启用链接识别 <> value Then
                 启用链接识别 = value
                 RebuildAllLinks()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -509,7 +509,7 @@ Public Class ModernTextBox
                     RefreshVisualLayout(True)
                 End If
             End If
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -527,7 +527,7 @@ Public Class ModernTextBox
                 Else
                     ClearAllFormats()
                 End If
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -541,7 +541,7 @@ Public Class ModernTextBox
             If _showLineNumbers <> value Then
                 _showLineNumbers = value
                 RefreshVisualLayout(True)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -578,7 +578,7 @@ Public Class ModernTextBox
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
             End If
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
     Private Function ShouldSerializeLineNumberFont() As Boolean
@@ -598,7 +598,7 @@ Public Class ModernTextBox
             UpdateDpiCache()
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -613,7 +613,7 @@ Public Class ModernTextBox
             UpdateDpiCache()
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -630,7 +630,7 @@ Public Class ModernTextBox
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -716,7 +716,7 @@ Public Class ModernTextBox
             If _wordWrap <> value Then
                 _wordWrap = value
                 RefreshVisualLayout(True)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -743,7 +743,7 @@ Public Class ModernTextBox
             _passwordChar = value
             InvalidateMeasureCache()
             RefreshVisualLayout(True)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -758,7 +758,7 @@ Public Class ModernTextBox
             _caretCol = pos.X
             ClearSelection()
             EnsureCaretVisible()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -778,7 +778,7 @@ Public Class ModernTextBox
             _caretLine = pos.Y
             _caretCol = pos.X
             _hasSelection = value <> 0
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -814,10 +814,15 @@ Public Class ModernTextBox
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 #End Region
 
 #Region "公共方法"
@@ -912,7 +917,7 @@ Public Class ModernTextBox
             SetScrollPixelOffset(MaxScrollPixelOffset())
         End If
 
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
     Public Shadows Sub [Select](start As Integer, length As Integer)
@@ -924,27 +929,27 @@ Public Class ModernTextBox
         _caretCol = endPos.X
         _hasSelection = length <> 0
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub DeselectAll()
         ClearSelection()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub ScrollToCaret()
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub ScrollToBottom()
         If Not 启用多行 Then Return
         SetScrollPixelOffset(MaxScrollPixelOffset())
         UpdateScrollBar()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub ScrollToTop()
         SetScrollPixelOffset(0)
         _scrollXOffset = 0
         UpdateScrollBar()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub ScrollToLine(lineIndex As Integer)
         If Not 启用多行 Then Return
@@ -954,7 +959,7 @@ Public Class ModernTextBox
             Math.Max(0, _visualLines.Count - 1))
         SetScrollPixelOffset(targetVi * _scaledLineHeight)
         UpdateScrollBar()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub SetFormat(startPos As Integer, length As Integer,
                          Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
@@ -976,7 +981,7 @@ Public Class ModernTextBox
         End While
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub SetLineFormat(lineIndex As Integer, startCol As Integer, length As Integer,
                               Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
@@ -988,7 +993,7 @@ Public Class ModernTextBox
         ApplyFormatToLine(lineIndex, startCol, length, foreColor, runFont)
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Public Sub ClearFormat(startPos As Integer, length As Integer)
         SetFormat(startPos, length, Color.Empty, Nothing)
@@ -999,7 +1004,7 @@ Public Class ModernTextBox
         Next
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 
@@ -1019,12 +1024,12 @@ Public Class ModernTextBox
                                                   _caretBlinkTimer.Stop()
                                                   If _caretVisible Then
                                                       _caretVisible = False
-                                                      请求V3渲染()
+                                                      请求GPU渲染()
                                                   End If
                                                   Return
                                               End If
                                               _caretVisible = Not _caretVisible
-                                              请求V3渲染()
+                                              请求GPU渲染()
                                           End Sub
         AddHandler _autoScrollTimer.Tick, AddressOf AutoScrollTick
         _scrollAnimationHelper.DirtyProvider = AddressOf 滚动动画脏区
@@ -1061,7 +1066,7 @@ Public Class ModernTextBox
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Overridable Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Overridable Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         EnsureDpiCacheCurrent()
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
@@ -1082,17 +1087,17 @@ Public Class ModernTextBox
         DrawScrollBar_GPU(context, w, h)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, fillRect As RectangleF)
@@ -1612,7 +1617,7 @@ Public Class ModernTextBox
                 If newOff <> CInt(Math.Round(_scrollPixelOffset)) Then
                     SetScrollPixelOffset(newOff)
                     UpdateScrollBar()
-                    请求V3渲染()
+                    请求GPU渲染()
                     Return
                 End If
             End If
@@ -1625,18 +1630,18 @@ Public Class ModernTextBox
             _selAnchorCol = _caretCol
             _hasSelection = False
             ResetCaretBlink()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
         If _scrollBar.IsDragging Then
             SetScrollPixelOffset(_scrollBar.DragMove(e.Y, TotalContentPixelHeight(), TextViewportHeight()))
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
         If _scrollBarVisible Then
-            If _scrollBar.UpdateHover(e.Location) Then 请求V3渲染()
+            If _scrollBar.UpdateHover(e.Location) Then 请求GPU渲染()
             If _scrollBar.TrackRect.Contains(e.Location) Then
                 Cursor = Cursors.Default
             Else
@@ -1658,7 +1663,7 @@ Public Class ModernTextBox
             Else
                 _autoScrollTimer.Stop()
             End If
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -1705,7 +1710,7 @@ Public Class ModernTextBox
         _caretCol = right
         _hasSelection = left <> right
         ResetCaretBlink()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
         EnsureDpiCacheCurrent()
@@ -1749,7 +1754,7 @@ Public Class ModernTextBox
             End If
             ClearSelection()
             EnsureCaretVisible()
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
         If Not extend Then
@@ -1791,7 +1796,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub MoveCaretHome(extend As Boolean, ctrl As Boolean)
         If Not extend Then
@@ -1802,7 +1807,7 @@ Public Class ModernTextBox
         _caretCol = 0
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub MoveCaretEnd(extend As Boolean, ctrl As Boolean)
         If Not extend Then
@@ -1813,7 +1818,7 @@ Public Class ModernTextBox
         _caretCol = _lines(_caretLine).Length
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub MoveCaretWordLeft(extend As Boolean)
         If Not extend Then
@@ -1838,7 +1843,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub MoveCaretWordRight(extend As Boolean)
         If Not extend Then
@@ -1863,7 +1868,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub UpdateSelectionFromAnchor(extend As Boolean)
         If extend Then
@@ -2092,7 +2097,7 @@ Public Class ModernTextBox
         _caretLine = _lines.Count - 1
         _caretCol = _lines(_caretLine).Length
         _hasSelection = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub ClearSelection()
         _hasSelection = False
@@ -2266,7 +2271,7 @@ Public Class ModernTextBox
 
         SyncScrollLineOffset()
         UpdateScrollBar()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub ClampScrollPixelOffsets()
         Dim maxOffset As Single = MaxScrollPixelOffset()
@@ -2324,7 +2329,7 @@ Public Class ModernTextBox
         _scrollAnimationFrameNeedsInvalidate = 应重绘滚动动画帧(stopAfterThisTick)
         If stopAfterThisTick Then StopScrollAnimation()
     End Sub
-    Private Sub 滚动动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+    Private Sub 滚动动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
         If _scrollAnimationFrameNeedsInvalidate Then
             Dim dirty = 滚动动画失效区域()
             If dirty.Width > 0 AndAlso dirty.Height > 0 Then
@@ -2520,7 +2525,7 @@ Public Class ModernTextBox
             Dim radiusInset As Integer = If(边框圆角半径 > 0, CInt(Math.Round(边框圆角半径 * DpiScale())) \ 2, 0)
             Dim inset As Integer = Math.Max(bi, radiusInset)
             Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * DpiScale()))
-            rightEdge = ClientRectangle.Width - inset - V3_ScrollBarRenderer.Margin - scaledScrollW - Math.Max(pad.Right, bi)
+            rightEdge = ClientRectangle.Width - inset - D3D_ScrollBarRenderer.Margin - scaledScrollW - Math.Max(pad.Right, bi)
         End If
         Return Math.Max(0, rightEdge)
     End Function
@@ -2991,7 +2996,7 @@ Public Class ModernTextBox
     Private Sub FinalizeTextChanged()
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
         OnTextChanged(EventArgs.Empty)
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
@@ -3002,12 +3007,12 @@ Public Class ModernTextBox
         If Me.Focused Then
             _caretBlinkTimer.Start()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
     Private Function DpiScale() As Single
@@ -3024,7 +3029,7 @@ Public Class ModernTextBox
         Return total
     End Function
     Private Sub UpdateDpiCache()
-        _cachedDpiScale = V3_DpiContext.FromControl(Me).Scale
+        _cachedDpiScale = D3D_DpiContext.FromControl(Me).Scale
         _cachedBorderInset = CInt(Math.Round(边框宽度 * _cachedDpiScale))
         _scaledLineHeight = CInt(Math.Round(行高 * _cachedDpiScale))
         _scaledCaretWidth = CInt(Math.Round(光标线宽 * _cachedDpiScale))
@@ -3035,7 +3040,7 @@ Public Class ModernTextBox
     End Sub
 
     Private Sub EnsureDpiCacheCurrent()
-        Dim currentScale As Single = V3_DpiContext.FromControl(Me).Scale
+        Dim currentScale As Single = D3D_DpiContext.FromControl(Me).Scale
         If Math.Abs(currentScale - _cachedDpiScale) < 0.0001F Then Return
         UpdateDpiCache()
         RefreshVisualLayout(True)
@@ -3067,7 +3072,7 @@ Public Class ModernTextBox
         _caretLine = pos.Y
         _caretCol = pos.X
         _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Function GetDisplayText(text As String) As String
         If _passwordChar = vbNullChar OrElse 启用多行 Then Return text
@@ -3101,23 +3106,23 @@ Public Class ModernTextBox
         End If
         _caretVisible = True
         _caretBlinkTimer.Start()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
         _caretBlinkTimer.Stop()
         _caretVisible = False
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         _underlineFontCache?.Dispose()
@@ -3127,21 +3132,21 @@ Public Class ModernTextBox
         InvalidateMeasureCache()
         MyBase.OnFontChanged(e)
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         UpdateDpiCache()
         RefreshVisualLayout(True)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 

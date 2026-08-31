@@ -470,7 +470,7 @@ End Module
 ''' </summary>
 Friend Class ExOverlayBackdropForm
     Inherits Form
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_IGpuDirtyRegionCoverage
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_IGpuDirtyRegionCoverage, V5_IGpuPresentationSource
 
     <DllImport("dwmapi.dll")>
     Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attr As Integer, ByRef attrValue As Integer, attrSize As Integer) As Integer
@@ -499,7 +499,7 @@ Friend Class ExOverlayBackdropForm
     Private Const WDA_NONE As Integer = &H0
     Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
 
-    Private 淡入调度器 As V3_AnimationHelper
+    Private 淡入调度器 As D3D_AnimationHelper
     Private ReadOnly 目标不透明度 As Double
     Private ReadOnly 跟踪目标 As Control
 
@@ -561,40 +561,40 @@ Friend Class ExOverlayBackdropForm
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
-        RequestV3Render()
+        RequestGpuRender()
         启动淡入动画()
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: overlay pixels are emitted by RenderGpu.
+        ' GPU-only: overlay pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
         context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), Color.FromArgb(255, Me.BackColor))
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
     ''' <summary>该根遮罩每帧以完全不透明颜色覆盖整个客户区，可安全省略 HDC 入站拷贝。</summary>
-    Public Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements V3_IGpuDirtyRegionCoverage.CoversDirtyRegion
+    Public Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements D3D_IGpuDirtyRegionCoverage.CoversDirtyRegion
         Return dirtyRegion.Width > 0 AndAlso dirtyRegion.Height > 0 AndAlso
                New Rectangle(Point.Empty, ClientSize).Contains(dirtyRegion)
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 淡入动画帧(sender As Object, e As EventArgs)
@@ -607,7 +607,7 @@ Friend Class ExOverlayBackdropForm
 
     Private Sub 启动淡入动画()
         If 淡入调度器 Is Nothing Then
-            淡入调度器 = New V3_AnimationHelper(Me) With {.FPS = 60}
+            淡入调度器 = New D3D_AnimationHelper(Me) With {.FPS = 60}
             淡入调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
         End If
         淡入调度器.StartFrameLoop(AddressOf 淡入动画帧)
@@ -671,7 +671,7 @@ End Class
 
 Friend Class ExOverlayMsgBoxHostForm
     Inherits Form
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
 #Region "Win32"
 
@@ -758,7 +758,7 @@ Friend Class ExOverlayMsgBoxHostForm
     Private 拥有者 As IWin32Window
     Private 拥有者控件 As Control
     Private 毛玻璃 As MessageDialogBackdropController
-    Private 淡入调度器 As V3_AnimationHelper
+    Private 淡入调度器 As D3D_AnimationHelper
     Private 目标不透明度 As Double
     Private 返回值字段 As MsgBoxResult = MsgBoxResult.Cancel
     Private 自定义返回索引 As Integer = -1
@@ -852,7 +852,7 @@ Friend Class ExOverlayMsgBoxHostForm
         目标不透明度 = Math.Max(0, Math.Min(255, 主题.OverlayOpacity)) / 255.0
         Opacity = 0
 
-        SC = V3_DpiContext.FromControl(Me).Scale
+        SC = D3D_DpiContext.FromControl(Me).Scale
         缩放常量()
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(owner, Me)
         标题字体 = New Font(fontName, 13.0F, FontStyle.Bold)
@@ -1060,7 +1060,7 @@ Friend Class ExOverlayMsgBoxHostForm
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: overlay/card pixels are emitted by RenderGpu.
+        ' GPU-only: overlay/card pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
@@ -1070,10 +1070,10 @@ Friend Class ExOverlayMsgBoxHostForm
     Private Sub 准备卡片毛玻璃()
         If IsDisposed Then Return
         If Not 卡片区域.IsEmpty Then 毛玻璃?.Prepare(RectangleToScreen(卡片区域))
-        RequestV3Render(卡片区域)
+        RequestGpuRender(卡片区域)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), Color.FromArgb(255, 主题.OverlayBackColor))
@@ -1093,17 +1093,17 @@ Friend Class ExOverlayMsgBoxHostForm
         MessageDialogRendering.DrawRectangle(context, cardRect, 主题.CardBorderColor, 1.0F)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 淡入动画帧(sender As Object, e As EventArgs)
@@ -1116,7 +1116,7 @@ Friend Class ExOverlayMsgBoxHostForm
 
     Private Sub 启动淡入动画()
         If 淡入调度器 Is Nothing Then
-            淡入调度器 = New V3_AnimationHelper(Me) With {.FPS = 60}
+            淡入调度器 = New D3D_AnimationHelper(Me) With {.FPS = 60}
             淡入调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
         End If
         淡入调度器.StartFrameLoop(AddressOf 淡入动画帧)
@@ -1141,7 +1141,7 @@ Friend Class ExOverlayMsgBoxHostForm
         更新遮罩范围()
         计算布局()
         准备卡片毛玻璃()
-        RequestV3Render()
+        RequestGpuRender()
         Activate()
     End Sub
 
@@ -1181,7 +1181,7 @@ Friend Class ExOverlayMsgBoxHostForm
         更新遮罩范围()
         计算布局()
         准备卡片毛玻璃()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
 #End Region
@@ -1250,7 +1250,7 @@ End Class
 ''' </summary>
 Friend Class ExOverlayMsgBoxForm
     Inherits Form
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
 #Region "Win32"
 
@@ -1470,7 +1470,7 @@ Friend Class ExOverlayMsgBoxForm
             居中区域 = Screen.PrimaryScreen.WorkingArea
         End If
 
-        SC = V3_DpiContext.FromControl(Me).Scale
+        SC = D3D_DpiContext.FromControl(Me).Scale
         缩放常量()
 
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(ownerCtrl, Me)
@@ -1758,7 +1758,7 @@ Friend Class ExOverlayMsgBoxForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: card pixels are emitted by RenderGpu.
+        ' GPU-only: card pixels are emitted by RenderGpu.
     End Sub
 
     Public Sub 准备毛玻璃()
@@ -1769,14 +1769,14 @@ Friend Class ExOverlayMsgBoxForm
             额外排除句柄 = 遮罩窗体.Handle
         End If
         毛玻璃?.Prepare(Me.Bounds, 额外排除句柄)
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim cardRect As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
@@ -1796,17 +1796,17 @@ Friend Class ExOverlayMsgBoxForm
             主题.CardBorderColor, 1.0F)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
 #End Region
@@ -1830,7 +1830,7 @@ Friend Class ExOverlayMsgBoxForm
         ' SendMessage 在拖拽结束后才返回
         EnableWindow(hWnd, False)
         准备毛玻璃()
-        RequestV3Render()
+        RequestGpuRender()
         Me.Activate()
     End Sub
 
@@ -1917,7 +1917,7 @@ Friend Class ExOverlayMsgBoxForm
             居中区域.Left + (居中区域.Width - Me.Width) \ 2,
             居中区域.Top + (居中区域.Height - Me.Height) \ 2)
         准备毛玻璃()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub Dispose(disposing As Boolean)

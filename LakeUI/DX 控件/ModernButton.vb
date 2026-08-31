@@ -5,7 +5,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("Click")>
 Public Class ModernButton
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Private _subTextFontCache As Font
     Private _subTextFontCacheKey As String
@@ -48,6 +48,7 @@ Public Class ModernButton
         InitializeComponent()
         动画助手.DirtyProvider = AddressOf 按钮动画脏区
         长按动画助手.DirtyProvider = AddressOf 按钮动画脏区
+        涟漪动画助手.DirtyProvider = AddressOf 按钮动画脏区
     End Sub
 
 #Region "绘制"
@@ -60,7 +61,7 @@ Public Class ModernButton
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
@@ -97,7 +98,7 @@ Public Class ModernButton
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -124,6 +125,7 @@ Public Class ModernButton
         Dim geo As ID2D1Geometry = Nothing
         If 是否有圆角 Then geo = context.GetRoundedRectangleGeometry(极限矩形区域, radius)
         绘制背景图片_GPU(context, 内容矩形区域, geo)
+        绘制点击涟漪_GPU(context, 极限矩形区域, geo)
         绘制长按遮罩_GPU(context, 极限矩形区域, geo)
 
         If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
@@ -334,7 +336,7 @@ Public Class ModernButton
                 _边框颜色 = 边框颜色
         End Select
     End Sub
-    Private Sub 按钮动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+    Private Sub 按钮动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
         If helper IsNot 长按动画助手 OrElse Not 长按确认已启用 Then
             sink.InvalidateAll()
             Return
@@ -413,8 +415,9 @@ Public Class ModernButton
         Pressed
     End Enum
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
-    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me)
-    Private ReadOnly 长按动画助手 As New V3_AnimationHelper(Me) With {.EasingMode = V3_AnimationHelper.EasingModeEnum.EaseInOut, .Duration = 800}
+    Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me) With {.Duration = 1000}
+    Private ReadOnly 长按动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseInOut, .Duration = 800}
+    Private ReadOnly 涟漪动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseOut, .Duration = 1000}
     Private 长按正在进行 As Boolean = False
     Private 长按上次失效进度 As Single = -1.0F
     Private 颜色动画已启用 As Boolean = False
@@ -424,6 +427,7 @@ Public Class ModernButton
     Private 助记键触发计时器 As Timer
     Private 点击后等待鼠标移动 As Boolean = False
     Private 点击后鼠标屏幕位置 As Point = Point.Empty
+    Private 涟漪中心 As PointF
 
     Private Sub 触发点击事件(e As EventArgs)
         If Not Enabled OrElse IsDisposed Then Return
@@ -473,6 +477,7 @@ Public Class ModernButton
         鼠标状态 = MouseStateEnum.Normal
         颜色动画已启用 = False
         动画助手.StopAnimation()
+        停止点击涟漪()
         停止长按确认()
 
         If 等待鼠标实际移动 Then
@@ -482,7 +487,7 @@ Public Class ModernButton
             点击后等待鼠标移动 = False
         End If
 
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub 按当前鼠标位置刷新状态()
@@ -506,6 +511,19 @@ Public Class ModernButton
         长按正在进行 = False
         长按动画助手.StopAnimation()
         长按动画助手.SetImmediate(0)
+    End Sub
+
+    Private Sub 开始点击涟漪(location As PointF)
+        If Not 点击涟漪已启用 OrElse 长按确认已启用 Then Return
+        涟漪中心 = location
+        涟漪动画助手.StopAnimation()
+        涟漪动画助手.SetImmediate(0)
+        涟漪动画助手.AnimateTo(1)
+    End Sub
+
+    Private Sub 停止点击涟漪()
+        涟漪动画助手.StopAnimation()
+        涟漪动画助手.SetImmediate(0)
     End Sub
 
     Protected Overrides Sub OnClick(e As EventArgs)
@@ -543,6 +561,8 @@ Public Class ModernButton
             长按正在进行 = True
             长按动画助手.SetImmediate(0)
             长按动画助手.AnimateTo(1)
+        ElseIf e.Button = MouseButtons.Left Then
+            开始点击涟漪(e.Location)
         End If
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -562,16 +582,17 @@ Public Class ModernButton
             颜色动画已启用 = False
             点击后等待鼠标移动 = False
             动画助手.StopAnimation()
+            停止点击涟漪()
             助记键触发计时器?.Stop()
             助记键触发计时器?.Dispose()
             助记键触发计时器 = Nothing
             停止长按确认()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnChangeUICues(e As UICuesEventArgs)
         MyBase.OnChangeUICues(e)
-        If (e.Changed And UICues.ChangeKeyboard) <> 0 Then 请求V3渲染()
+        If (e.Changed And UICues.ChangeKeyboard) <> 0 Then 请求GPU渲染()
     End Sub
     Protected Overrides Function ProcessMnemonic(charCode As Char) As Boolean
         If CanSelect AndAlso IsMnemonic(charCode, MyBase.Text) Then
@@ -590,6 +611,7 @@ Public Class ModernButton
         助记键触发计时器?.Dispose()
 
         切换鼠标颜色状态(MouseStateEnum.Pressed)
+        开始点击涟漪(New PointF(ClientSize.Width / 2.0F, ClientSize.Height / 2.0F))
 
         助记键触发计时器 = New Timer() With {.Interval = Math.Max(1, 动画助手.Duration)}
         AddHandler 助记键触发计时器.Tick,
@@ -604,11 +626,36 @@ Public Class ModernButton
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        请求V3渲染()
+        请求GPU渲染()
+    End Sub
+
+    Private Sub 绘制点击涟漪_GPU(context As D3D_PaintContext, area As RectangleF, geo As ID2D1Geometry)
+        If Not 点击涟漪已启用 OrElse 长按确认已启用 OrElse 点击涟漪颜色.A <= 0 Then Return
+        Dim progress = Math.Clamp(涟漪动画助手.Progress, 0.0F, 1.0F)
+        If progress <= 0.0F OrElse progress >= 1.0F Then Return
+
+        Dim dx = Math.Max(Math.Abs(涟漪中心.X - area.Left), Math.Abs(area.Right - 涟漪中心.X))
+        Dim dy = Math.Max(Math.Abs(涟漪中心.Y - area.Top), Math.Abs(area.Bottom - 涟漪中心.Y))
+        Dim radius = CSng(Math.Sqrt(dx * dx + dy * dy) * progress)
+        Dim alpha = Math.Clamp(CInt(点击涟漪颜色.A * (1.0F - progress)), 0, 255)
+        If radius <= 0.0F OrElse alpha <= 0 Then Return
+
+        Dim clipped As Boolean
+        If geo IsNot Nothing Then
+            PushGeometryClip_GPU(context, geo, area)
+            clipped = True
+        End If
+        Try
+            Dim rippleDrawColor = System.Drawing.Color.FromArgb(alpha, 点击涟漪颜色.R, 点击涟漪颜色.G, 点击涟漪颜色.B)
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, rippleDrawColor, context.DeviceGeneration)
+            context.DeviceContext.FillEllipse(New Ellipse(New Vector2(涟漪中心.X, 涟漪中心.Y), radius, radius), brush)
+        Finally
+            If clipped Then context.DeviceContext.PopLayer()
+        End Try
     End Sub
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 
@@ -616,26 +663,26 @@ Public Class ModernButton
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -644,13 +691,15 @@ Public Class ModernButton
         End Set
     End Property
 
-    <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(300), Browsable(True)>
+    <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(1000), Browsable(True)>
     Public Property AnimationDuration As Integer
         Get
             Return 动画助手.Duration
         End Get
         Set(value As Integer)
-            动画助手.Duration = Math.Max(0, value)
+            Dim duration = Math.Max(0, value)
+            动画助手.Duration = duration
+            涟漪动画助手.Duration = duration
         End Set
     End Property
 
@@ -663,6 +712,7 @@ Public Class ModernButton
             Dim fps As Integer = Math.Max(0, value)
             动画助手.FPS = fps
             长按动画助手.FPS = fps
+            涟漪动画助手.FPS = fps
         End Set
     End Property
 
@@ -673,7 +723,7 @@ Public Class ModernButton
     ''' 为 Nothing 时不进行背景采样，透明 BackColor 交由 WinForms 原生透明背景流程处理。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
+     Description("背景采样源。设置后记录关联源控件；GPU 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -682,10 +732,15 @@ Public Class ModernButton
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 #End Region
 
 #Region "边框属性"
@@ -822,7 +877,7 @@ Public Class ModernButton
             If 次要文本字号 = value Then Return
             次要文本字号 = value
             释放次文本字体()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
     Private 主次文本间距 As Integer = 1
@@ -963,6 +1018,7 @@ Public Class ModernButton
             Return 长按确认已启用
         End Get
         Set(value As Boolean)
+            If value Then 停止点击涟漪()
             SetValue(长按确认已启用, value)
         End Set
     End Property
@@ -1000,13 +1056,38 @@ Public Class ModernButton
     End Property
 #End Region
 
+#Region "点击涟漪属性"
+    Private 点击涟漪已启用 As Boolean = True
+    <Category("LakeUI"), Description("在非长按模式下启用点击涟漪动画"), DefaultValue(True), Browsable(True)>
+    Public Property RippleEnabled As Boolean
+        Get
+            Return 点击涟漪已启用
+        End Get
+        Set(value As Boolean)
+            If Not value Then 停止点击涟漪()
+            SetValue(点击涟漪已启用, value)
+        End Set
+    End Property
+
+    Private 点击涟漪颜色 As Color = Color.FromArgb(90, 255, 255, 255)
+    <Category("LakeUI"), Description("点击涟漪的起始颜色；透明度随扩散进度衰减"), DefaultValue(GetType(Color), "90, 255, 255, 255"), Browsable(True)>
+    Public Property RippleColor As Color
+        Get
+            Return 点击涟漪颜色
+        End Get
+        Set(value As Color)
+            SetValue(点击涟漪颜色, value)
+        End Set
+    End Property
+#End Region
+
 #Region "生命周期"
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         _mainTextHeightCacheKey = Nothing
         _mainTextHeightCache = 0
         释放次文本字体()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 

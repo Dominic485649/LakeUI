@@ -130,13 +130,6 @@ Public Class ThisIsYourWindow
                                                        bAlpha As Byte, dwFlags As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
-    Private Const WDA_NONE As Integer = &H0
-    Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
-
-    <DllImport("user32.dll")>
-    Private Shared Function SetWindowDisplayAffinity(hWnd As IntPtr, dwAffinity As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
-    End Function
-
     <DllImport("user32.dll")>
     Private Shared Function ValidateRect(hWnd As IntPtr, lpRect As IntPtr) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
@@ -247,6 +240,10 @@ Public Class ThisIsYourWindow
         ' ── 毛玻璃 ──
         Public Renderer As D3D_BackdropSurfaceRenderer
         Public BackdropTimer As PrecisionTimer
+        Public ChromeOverlays As List(Of ChromeOverlayControl)
+        Public ChromeOverlayActive As Boolean
+        Public ChromeOverlayRegions As List(Of Rectangle)
+        Public ChromeOverlayRegionsSignature As Long = Long.MinValue
         ' ── D3D 资源 ──
         ' 窗口级 D3D compositor 统一持有图形资源；这里不再持有任何长期 D2D 字段。
         Public Sub New(form As Form)
@@ -273,6 +270,7 @@ Public Class ThisIsYourWindow
     Private _标题栏控件原始停靠 As DockStyle
     Private _标题栏控件原始锚定 As AnchorStyles
     Private _标题栏控件宿主窗体 As Form
+    Private ReadOnly _useGpuChromeOverlay As Boolean = True
 
     Private Function 查找状态(form As Form) As PerFormState
         Dim s As PerFormState = Nothing
@@ -288,14 +286,14 @@ Public Class ThisIsYourWindow
         End SyncLock
     End Function
 
-    Friend Shared Sub NotifyV3FramePresented(form As Form)
+    Friend Shared Sub NotifyGpuFramePresented(form As Form)
         If form Is Nothing Then Return
         Dim owner As ThisIsYourWindow = Nothing
         If Not TryGetAttached(form, owner) OrElse owner Is Nothing Then Return
         owner.完成首帧还原(owner.查找状态(form))
     End Sub
 
-    Friend Shared Sub NotifyV3FrameNotPresented(form As Form)
+    Friend Shared Sub NotifyGpuFrameNotPresented(form As Form)
         If form Is Nothing Then Return
         Dim owner As ThisIsYourWindow = Nothing
         If Not TryGetAttached(form, owner) OrElse owner Is Nothing Then Return
@@ -306,9 +304,56 @@ Public Class ThisIsYourWindow
         If context Is Nothing OrElse targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
         Dim owner As ThisIsYourWindow = Nothing
         If Not TryGetAttached(targetForm, owner) OrElse owner Is Nothing Then Return False
-        owner.RenderGpuWindow(context, targetForm)
-        owner.完成首帧还原(owner.查找状态(targetForm))
+        Dim state = owner.查找状态(targetForm)
+        If state Is Nothing Then Return False
+
+        ' When child overlays are active they own the caption and border
+        ' pixels. Do not render the same chrome into the Form surface, or the
+        ' two coordinate spaces can blend and produce a shifted/self-sampled
+        ' frame. The Form surface remains responsible for client content.
+        If Not state.ChromeOverlayActive Then
+            owner.RenderGpuWindow(context, targetForm)
+        Else
+            D3D_RenderDiagnostics.V5ChromeOverlayDuplicateSuppressed()
+        End If
+        owner.完成首帧还原(state)
         Return True
+    End Function
+
+    ''' <summary>
+    ''' Renders the attached window visual into another GPU surface, including
+    ''' the configured image/blur backdrop. This is used when a native Form is
+    ''' selected as a V5 BackgroundSource; no HDC or screen capture is involved.
+    ''' </summary>
+    Friend Shared Function TryRenderAttachedSurface(context As D3D_PaintContext, targetForm As Form) As Boolean
+        If context Is Nothing OrElse targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
+        Dim owner As ThisIsYourWindow = Nothing
+        If Not TryGetAttached(targetForm, owner) OrElse owner Is Nothing Then Return False
+        Dim state = owner.查找状态(targetForm)
+        If state Is Nothing Then Return False
+        owner.RenderGpuWindow(context, targetForm)
+        Return True
+    End Function
+
+    ''' <summary>
+    ''' Draws only the attached window backdrop into a client surface.  Chrome
+    ''' overlays own the caption and borders, so the Form surface still needs
+    ''' an explicit backdrop pass for its client area.
+    ''' </summary>
+    Friend Shared Function TryRenderAttachedClientBackdrop(context As D3D_PaintContext,
+                                                            targetForm As Form) As Boolean
+        If context Is Nothing OrElse targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
+        Dim owner As ThisIsYourWindow = Nothing
+        If Not TryGetAttached(targetForm, owner) OrElse owner Is Nothing Then Return False
+        Dim state = owner.查找状态(targetForm)
+        If state Is Nothing OrElse Not state.ChromeOverlayActive Then Return False
+        Return owner.RenderGpuClientBackdrop(context, targetForm)
+    End Function
+
+    Friend Shared Function HasAttachedSurface(targetForm As Form) As Boolean
+        If targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
+        Dim owner As ThisIsYourWindow = Nothing
+        Return TryGetAttached(targetForm, owner) AndAlso owner IsNot Nothing
     End Function
 
     Friend Shared Function AttachedBackdropCoversClient(form As Form) As Boolean
@@ -433,7 +478,7 @@ Public Class ThisIsYourWindow
 
     Private Shared Function 取Dpi缩放(control As Control) As Single
         If control IsNot Nothing AndAlso Not control.IsDisposed Then
-            Return V3_DpiContext.FromControl(control).Scale
+            Return D3D_DpiContext.FromControl(control).Scale
         End If
         Return 1.0F
     End Function
@@ -570,7 +615,7 @@ Public Class ThisIsYourWindow
                ReferenceEquals(s.HostForm, _标题栏控件宿主窗体) Then
                 _正在同步标题栏控件 = True
                 Try
-                    ctrl.SetBounds(0, 0, 0, 0)
+                    If ctrl.Bounds <> Rectangle.Empty Then ctrl.SetBounds(0, 0, 0, 0)
                 Finally
                     _正在同步标题栏控件 = False
                 End Try
@@ -583,7 +628,9 @@ Public Class ThisIsYourWindow
             s.CaptionControlRect = Rectangle.Empty
             _正在同步标题栏控件 = True
             Try
-                ctrl.SetBounds(captionRect.X, captionRect.Y, 0, 0)
+                Dim hiddenBounds As New Rectangle(captionRect.X, captionRect.Y, 0, 0)
+                If ctrl.Parent IsNot s.HostForm Then s.HostForm.Controls.Add(ctrl)
+                If ctrl.Bounds <> hiddenBounds Then ctrl.SetBounds(hiddenBounds.X, hiddenBounds.Y, hiddenBounds.Width, hiddenBounds.Height)
             Finally
                 _正在同步标题栏控件 = False
             End Try
@@ -617,11 +664,15 @@ Public Class ThisIsYourWindow
 
         _正在同步标题栏控件 = True
         Try
-            ctrl.Dock = DockStyle.None
-            ctrl.Anchor = AnchorStyles.Top Or AnchorStyles.Left
             If ctrl.Parent IsNot s.HostForm Then s.HostForm.Controls.Add(ctrl)
-            ctrl.SetBounds(x, y, width, height)
-            ctrl.BringToFront()
+            If ctrl.Dock <> DockStyle.None Then ctrl.Dock = DockStyle.None
+            Dim desiredAnchor = AnchorStyles.Top Or AnchorStyles.Left
+            If ctrl.Anchor <> desiredAnchor Then ctrl.Anchor = desiredAnchor
+            Dim desiredBounds As New Rectangle(x, y, width, height)
+            If ctrl.Bounds <> desiredBounds Then ctrl.SetBounds(desiredBounds.X, desiredBounds.Y, desiredBounds.Width, desiredBounds.Height)
+            If ctrl.Parent IsNot Nothing AndAlso ctrl.Parent.Controls.GetChildIndex(ctrl) > 0 Then
+                ctrl.BringToFront()
+            End If
         Finally
             _正在同步标题栏控件 = False
         End Try
@@ -661,14 +712,36 @@ Public Class ThisIsYourWindow
         For Each s In _forms.Values
             Dim frm = s.HostForm
             If frm IsNot Nothing AndAlso Not frm.IsDisposed AndAlso frm.IsHandleCreated Then
-                请求V3渲染(frm, 获取真实客户区矩形(frm), immediate)
+                ' The attached Form itself is a native host, not a V5 source.
+                ' Mark its optional background surface dirty for cross-form
+                ' consumers, then present chrome overlays directly.
+                D3D_ControlSurfaceRegistry.MarkDirty(frm,
+                                                      获取真实客户区矩形(frm),
+                                                      requestConsumers:=True)
+                请求Chrome渲染(s, includeBorders:=True)
             End If
         Next
     End Sub
 
-    Friend Shared Sub 请求V3渲染(control As Control, dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Friend Shared Sub 请求GPU渲染(control As Control, dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If control Is Nothing OrElse control.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(control, dirtyRect)
+
+        Dim form = TryCast(control, Form)
+        If form IsNot Nothing Then
+            Dim owner As ThisIsYourWindow = Nothing
+            If TryGetAttached(form, owner) AndAlso owner IsNot Nothing Then
+                Dim state = owner.查找状态(form)
+                If state Is Nothing Then Return
+                D3D_ControlSurfaceRegistry.MarkDirty(form, dirtyRect, requestConsumers:=True)
+                Dim captionBottom = owner.取缩放标题栏总高度(form)
+                Dim captionOnly = dirtyRect.Width > 0 AndAlso dirtyRect.Height > 0 AndAlso
+                                  dirtyRect.Top < captionBottom AndAlso dirtyRect.Bottom <= captionBottom
+                owner.请求Chrome渲染(state, includeBorders:=Not captionOnly)
+                Return
+            End If
+        End If
+
+        D3D_InvalidationRouter.RequestRender(control, dirtyRect)
     End Sub
 
     Private Sub 使布局失效(Optional recalculate As Boolean = True)
@@ -680,8 +753,32 @@ Public Class ThisIsYourWindow
 
     Private Sub 通知标题栏重绘(Optional immediate As Boolean = True)
         For Each s In _forms.Values
-            InvalidateCaption(s.HostForm, immediate)
+            请求Chrome渲染(s, includeBorders:=True)
         Next
+    End Sub
+
+    Private Sub 请求Chrome渲染(s As PerFormState, includeBorders As Boolean)
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
+        If s.ChromeOverlayActive AndAlso s.ChromeOverlays IsNot Nothing Then
+            If includeBorders Then
+                For Each overlay In s.ChromeOverlays
+                    If overlay Is Nothing OrElse overlay.IsDisposed OrElse Not overlay.Visible Then Continue For
+                    D3D_V5Presentation.RequestRender(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
+                Next
+            Else
+                Dim captionOverlay = 获取CaptionOverlay(s)
+                If captionOverlay IsNot Nothing AndAlso Not captionOverlay.IsDisposed AndAlso captionOverlay.Visible Then
+                    D3D_V5Presentation.RequestRender(captionOverlay, New Rectangle(Point.Empty, captionOverlay.ClientSize))
+                End If
+            End If
+            Return
+        End If
+
+        ' A native Form is not itself a V5 presentation source. Keep this
+        ' fallback for custom hosts that explicitly implement the contract.
+        If TypeOf s.HostForm Is V5_IGpuPresentationSource Then
+            D3D_V5Presentation.RequestRender(s.HostForm, 获取真实客户区矩形(s.HostForm))
+        End If
     End Sub
 
     Private Sub 应用Dwm窗口属性(hWnd As IntPtr, Optional disableTransitions As Boolean = False)
@@ -808,7 +905,7 @@ Public Class ThisIsYourWindow
         If requestBackdropFrame Then
             请求毛玻璃帧(s, True, forceImageMode:=sizeChanged)
         ElseIf sizeChanged Then
-            请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm))
+            请求GPU渲染(s.HostForm, 获取真实客户区矩形(s.HostForm))
         End If
         重置毛玻璃Tick(s)
     End Sub
@@ -835,6 +932,10 @@ Public Class ThisIsYourWindow
         Dim frm = TryCast(sender, Form)
         If frm Is Nothing Then Return
         Dim s = 查找状态(frm)
+        If s IsNot Nothing AndAlso s.ChromeOverlayActive Then
+            完成首帧还原(s)
+            Return
+        End If
         If TryPaintWindowChrome(e, frm) Then
             完成首帧还原(s)
         ElseIf s IsNot Nothing AndAlso s.PendingFirstPaintRestore Then
@@ -895,6 +996,7 @@ Public Class ThisIsYourWindow
         Else
             销毁阴影(s)
         End If
+        更新ChromeOverlays(s)
     End Sub
 
     ''' <summary>
@@ -936,7 +1038,16 @@ Public Class ThisIsYourWindow
         Dim dirty As Rectangle = 合并脏区(s.LastTitleTextDirtyRect, newDirty)
         s.LastTitleTextDirtyRect = newDirty
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            请求V3渲染(s.HostForm, dirty, immediate)
+            D3D_ControlSurfaceRegistry.MarkDirty(s.HostForm, dirty, requestConsumers:=True)
+            If s.ChromeOverlayActive AndAlso s.ChromeOverlays IsNot Nothing Then
+                Dim captionOverlay = 获取CaptionOverlay(s)
+                If captionOverlay IsNot Nothing AndAlso captionOverlay.Visible Then
+                    D3D_V5Presentation.RequestRender(captionOverlay,
+                                                      New Rectangle(Point.Empty, captionOverlay.ClientSize))
+                End If
+            ElseIf TypeOf s.HostForm Is V5_IGpuPresentationSource Then
+                D3D_V5Presentation.RequestRender(s.HostForm, dirty)
+            End If
         End If
     End Sub
 
@@ -982,13 +1093,14 @@ Public Class ThisIsYourWindow
 
     Private Sub 处理DpiChanged(s As PerFormState)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
+        If s.ChromeOverlayActive Then D3D_RenderDiagnostics.V5ChromeOverlayDpiUpdated()
         s.LayoutSignature = -1
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
         D3D_RenderCore.InvalidateExistingTextResources(s.HostForm)
         If 毛玻璃当前启用(s) Then 请求毛玻璃帧(s, True, forceImageMode:=True)
         更新阴影(s)
-        请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+        请求GPU渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
     End Sub
 
     Friend Sub 开始渐入动画(s As PerFormState)
@@ -1035,6 +1147,7 @@ Public Class ThisIsYourWindow
             Return _边框颜色
         End Get
         Set(value As Color)
+            If _边框颜色 = value Then Return
             _边框颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1047,6 +1160,7 @@ Public Class ThisIsYourWindow
             Return _边框失焦颜色
         End Get
         Set(value As Color)
+            If _边框失焦颜色 = value Then Return
             _边框失焦颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1167,6 +1281,7 @@ Public Class ThisIsYourWindow
             Return _标题栏背景颜色
         End Get
         Set(value As Color)
+            If _标题栏背景颜色 = value Then Return
             _标题栏背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1179,6 +1294,7 @@ Public Class ThisIsYourWindow
             Return _标题栏失焦背景颜色
         End Get
         Set(value As Color)
+            If _标题栏失焦背景颜色 = value Then Return
             _标题栏失焦背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1213,6 +1329,7 @@ Public Class ThisIsYourWindow
             Return _标题栏遮罩颜色
         End Get
         Set(value As Color)
+            If _标题栏遮罩颜色 = value Then Return
             _标题栏遮罩颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1273,6 +1390,7 @@ Public Class ThisIsYourWindow
             Return _标题文字对齐
         End Get
         Set(value As TitleAlignEnum)
+            If _标题文字对齐 = value Then Return
             _标题文字对齐 = value : 通知重绘()
         End Set
     End Property
@@ -1285,6 +1403,7 @@ Public Class ThisIsYourWindow
             Return _标题文字字体
         End Get
         Set(value As Font)
+            If ReferenceEquals(_标题文字字体, value) Then Return
             _标题文字字体 = value
             使标题字体资源失效()
             通知重绘()
@@ -1331,7 +1450,9 @@ Public Class ThisIsYourWindow
             Return _标题文字右边距
         End Get
         Set(value As Integer)
-            _标题文字右边距 = Math.Max(0, value) : 通知重绘()
+            value = Math.Max(0, value)
+            If _标题文字右边距 = value Then Return
+            _标题文字右边距 = value : 通知重绘()
         End Set
     End Property
 
@@ -1443,7 +1564,9 @@ Public Class ThisIsYourWindow
             Return _按钮符号大小
         End Get
         Set(value As Integer)
-            _按钮符号大小 = Math.Max(4, value) : 通知重绘()
+            value = Math.Max(4, value)
+            If _按钮符号大小 = value Then Return
+            _按钮符号大小 = value : 通知重绘()
         End Set
     End Property
 
@@ -1455,7 +1578,9 @@ Public Class ThisIsYourWindow
             Return _按钮符号线宽
         End Get
         Set(value As Single)
-            _按钮符号线宽 = Math.Max(0.5F, value) : 通知重绘()
+            value = Math.Max(0.5F, value)
+            If _按钮符号线宽 = value Then Return
+            _按钮符号线宽 = value : 通知重绘()
         End Set
     End Property
 
@@ -1482,7 +1607,9 @@ Public Class ThisIsYourWindow
             Return _按钮圆角半径
         End Get
         Set(value As Integer)
-            _按钮圆角半径 = Math.Max(0, value) : 通知重绘()
+            value = Math.Max(0, value)
+            If _按钮圆角半径 = value Then Return
+            _按钮圆角半径 = value : 通知重绘()
         End Set
     End Property
 
@@ -1529,6 +1656,7 @@ Public Class ThisIsYourWindow
             Return _关闭按钮背景颜色
         End Get
         Set(value As Color)
+            If _关闭按钮背景颜色 = value Then Return
             _关闭按钮背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1541,6 +1669,7 @@ Public Class ThisIsYourWindow
             Return _关闭按钮悬停背景颜色
         End Get
         Set(value As Color)
+            If _关闭按钮悬停背景颜色 = value Then Return
             _关闭按钮悬停背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1553,6 +1682,7 @@ Public Class ThisIsYourWindow
             Return _关闭按钮按下背景颜色
         End Get
         Set(value As Color)
+            If _关闭按钮按下背景颜色 = value Then Return
             _关闭按钮按下背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1565,6 +1695,7 @@ Public Class ThisIsYourWindow
             Return _关闭按钮符号颜色
         End Get
         Set(value As Color)
+            If _关闭按钮符号颜色 = value Then Return
             _关闭按钮符号颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1577,6 +1708,7 @@ Public Class ThisIsYourWindow
             Return _关闭按钮悬停符号颜色
         End Get
         Set(value As Color)
+            If _关闭按钮悬停符号颜色 = value Then Return
             _关闭按钮悬停符号颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1593,6 +1725,7 @@ Public Class ThisIsYourWindow
             Return _功能按钮背景颜色
         End Get
         Set(value As Color)
+            If _功能按钮背景颜色 = value Then Return
             _功能按钮背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1605,6 +1738,7 @@ Public Class ThisIsYourWindow
             Return _功能按钮悬停背景颜色
         End Get
         Set(value As Color)
+            If _功能按钮悬停背景颜色 = value Then Return
             _功能按钮悬停背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1617,6 +1751,7 @@ Public Class ThisIsYourWindow
             Return _功能按钮按下背景颜色
         End Get
         Set(value As Color)
+            If _功能按钮按下背景颜色 = value Then Return
             _功能按钮按下背景颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1629,6 +1764,7 @@ Public Class ThisIsYourWindow
             Return _功能按钮符号颜色
         End Get
         Set(value As Color)
+            If _功能按钮符号颜色 = value Then Return
             _功能按钮符号颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1641,6 +1777,7 @@ Public Class ThisIsYourWindow
             Return _功能按钮悬停符号颜色
         End Get
         Set(value As Color)
+            If _功能按钮悬停符号颜色 = value Then Return
             _功能按钮悬停符号颜色 = value : 通知重绘()
         End Set
     End Property
@@ -1739,7 +1876,7 @@ Public Class ThisIsYourWindow
                     SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
                                  CUInt(SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER))
                     更新阴影(s)
-                    请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+                    请求GPU渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
                     Continue For
                 End If
                 Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
@@ -1753,7 +1890,7 @@ Public Class ThisIsYourWindow
                 SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
                              SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER)
                 更新阴影(s)
-                请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+                请求GPU渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
             Next
         End Set
     End Property
@@ -1765,7 +1902,9 @@ Public Class ThisIsYourWindow
             Return _分层阴影深度
         End Get
         Set(value As Integer)
-            _分层阴影深度 = Math.Max(1, value)
+            value = Math.Max(1, value)
+            If _分层阴影深度 = value Then Return
+            _分层阴影深度 = value
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
                 更新阴影(s)
@@ -1780,6 +1919,7 @@ Public Class ThisIsYourWindow
             Return _分层阴影颜色
         End Get
         Set(value As Color)
+            If _分层阴影颜色 = value Then Return
             _分层阴影颜色 = value
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
@@ -1795,6 +1935,7 @@ Public Class ThisIsYourWindow
             Return _分层阴影不透明度
         End Get
         Set(value As Byte)
+            If _分层阴影不透明度 = value Then Return
             _分层阴影不透明度 = value
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
@@ -1815,7 +1956,9 @@ Public Class ThisIsYourWindow
             Return _分层阴影调整宽度
         End Get
         Set(value As Integer)
-            _分层阴影调整宽度 = Math.Max(0, Math.Min(value, _分层阴影深度))
+            value = Math.Max(0, Math.Min(value, _分层阴影深度))
+            If _分层阴影调整宽度 = value Then Return
+            _分层阴影调整宽度 = value
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then
                     s.ShadowForm.ResizeWidth = _分层阴影调整宽度
@@ -2001,7 +2144,7 @@ Public Class ThisIsYourWindow
                 If s.Renderer IsNot Nothing AndAlso _毛玻璃模式 = BackdropModeEnum.Image Then
                     s.Renderer.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseAllCaches)
                     s.Renderer.SetSource(True, value)
-                    s.Renderer.RequestFrame(s.HostForm.Bounds, True)
+                    s.Renderer.RequestFrame(获取毛玻璃捕获区域(s.HostForm), True)
                 End If
             Next
             通知重绘()
@@ -2015,6 +2158,7 @@ Public Class ThisIsYourWindow
             Return _毛玻璃Tint颜色
         End Get
         Set(value As Color)
+            If _毛玻璃Tint颜色 = value Then Return
             _毛玻璃Tint颜色 = value : 通知重绘()
         End Set
     End Property
@@ -2026,6 +2170,7 @@ Public Class ThisIsYourWindow
             Return _毛玻璃Tint失焦颜色
         End Get
         Set(value As Color)
+            If _毛玻璃Tint失焦颜色 = value Then Return
             _毛玻璃Tint失焦颜色 = value : 通知重绘()
         End Set
     End Property
@@ -2037,7 +2182,9 @@ Public Class ThisIsYourWindow
             Return _毛玻璃模糊半径
         End Get
         Set(value As Integer)
-            _毛玻璃模糊半径 = Math.Max(1, Math.Min(96, value))
+            value = Math.Max(1, Math.Min(96, value))
+            If _毛玻璃模糊半径 = value Then Return
+            _毛玻璃模糊半径 = value
             应用毛玻璃参数()
         End Set
     End Property
@@ -2049,7 +2196,9 @@ Public Class ThisIsYourWindow
             Return _毛玻璃模糊次数
         End Get
         Set(value As Integer)
-            _毛玻璃模糊次数 = Math.Max(0, Math.Min(5, value))
+            value = Math.Max(0, Math.Min(5, value))
+            If _毛玻璃模糊次数 = value Then Return
+            _毛玻璃模糊次数 = value
             应用毛玻璃参数()
         End Set
     End Property
@@ -2061,7 +2210,9 @@ Public Class ThisIsYourWindow
             Return _毛玻璃下采样
         End Get
         Set(value As Integer)
-            _毛玻璃下采样 = Math.Max(1, value)
+            value = Math.Max(1, value)
+            If _毛玻璃下采样 = value Then Return
+            _毛玻璃下采样 = value
             应用毛玻璃参数()
         End Set
     End Property
@@ -2073,6 +2224,7 @@ Public Class ThisIsYourWindow
             Return _毛玻璃噪点不透明度
         End Get
         Set(value As Byte)
+            If _毛玻璃噪点不透明度 = value Then Return
             _毛玻璃噪点不透明度 = value : 通知重绘()
         End Set
     End Property
@@ -2084,7 +2236,9 @@ Public Class ThisIsYourWindow
             Return _毛玻璃噪点缩放
         End Get
         Set(value As Single)
-            _毛玻璃噪点缩放 = Math.Max(0.1F, value)
+            value = Math.Max(0.1F, value)
+            If _毛玻璃噪点缩放 = value Then Return
+            _毛玻璃噪点缩放 = value
             应用毛玻璃参数()
         End Set
     End Property
@@ -2096,7 +2250,9 @@ Public Class ThisIsYourWindow
             Return _毛玻璃帧率
         End Get
         Set(value As Integer)
-            _毛玻璃帧率 = Math.Max(0, Math.Min(60, value))
+            value = Math.Max(0, Math.Min(60, value))
+            If _毛玻璃帧率 = value Then Return
+            _毛玻璃帧率 = value
             For Each s In _forms.Values : 重置毛玻璃Tick(s) : Next
         End Set
     End Property
@@ -2130,6 +2286,7 @@ Public Class ThisIsYourWindow
             Return _边框自动颜色
         End Get
         Set(value As Boolean)
+            If _边框自动颜色 = value Then Return
             _边框自动颜色 = value : 通知重绘()
         End Set
     End Property
@@ -2141,6 +2298,7 @@ Public Class ThisIsYourWindow
             Return _分层阴影自动颜色
         End Get
         Set(value As Boolean)
+            If _分层阴影自动颜色 = value Then Return
             _分层阴影自动颜色 = value
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
@@ -2160,22 +2318,10 @@ Public Class ThisIsYourWindow
     Private Sub 应用毛玻璃状态(s As PerFormState)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
         Dim mode As BackdropModeEnum = _毛玻璃模式
-        ' Auto / CaptionOnly 模式依赖 WDA_EXCLUDEFROMCAPTURE 防自照；OS 不支持时不启用抓屏背景。
-        Dim shouldEnable As Boolean = 毛玻璃允许用于窗体(s) AndAlso
-                                      ((mode = BackdropModeEnum.Image) OrElse
-                                       ((mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso IsBackdropSupported)
-                                      )
+        ' V5 backdrop 只接受显式图片源；桌面截图模式已移除。
+        Dim shouldEnable As Boolean = 毛玻璃允许用于窗体(s) AndAlso mode = BackdropModeEnum.Image
 
         If shouldEnable Then
-            ' WDA_EXCLUDEFROMCAPTURE 仅在 Auto / CaptionOnly 模式且用户显式开启 BackdropExcludeFromCapture 时启用：
-            '   - Image 模式不抓屏，永远不需要 WDA。
-            '   - Auto / CaptionOnly + 关闭 WDA：截图工具能截到本窗口，但若开启周期刷新会出现"递归自照"纹路 ⇒ 强制纯事件驱动。
-            '   - Auto / CaptionOnly + 开启 WDA：可安全周期刷新，但系统截图 / 录屏均无法捕获本窗口。
-            If (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso _毛玻璃排除截屏 Then
-                SetWindowDisplayAffinity(s.HostForm.Handle, WDA_EXCLUDEFROMCAPTURE)
-            Else
-                SetWindowDisplayAffinity(s.HostForm.Handle, WDA_NONE)
-            End If
             If s.Renderer Is Nothing Then
                 s.Renderer = New D3D_BackdropSurfaceRenderer(s.HostForm)
                 s.Renderer.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样,
@@ -2187,18 +2333,16 @@ Public Class ThisIsYourWindow
                                                             End If
                                                         End Sub
             End If
-            ' 配置源。非 Image 模式必须清掉静态源图引用，避免切回桌面抓屏后旧 Image 仍被 Renderer 持有。
+            ' 配置源。非 Image 模式清掉静态源图引用。
             s.Renderer.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseAllCaches)
             s.Renderer.SetSource(mode = BackdropModeEnum.Image, If(mode = BackdropModeEnum.Image, _毛玻璃图片, Nothing))
-            ' Auto / CaptionOnly 模式且未长期启用 WDA 时，让 Renderer 在每次 BitBlt 瞬间临时排除自身，
-            ' 避免事件驱动抓屏抓到自己产生镜像反馈。
+            ' V5 不执行桌面截图；该兼容配置入口保持为空操作。
             s.Renderer.SetTransientExcludeOnCapture(
                 (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso Not _毛玻璃排除截屏)
             ' 首帧
             s.Renderer.RequestFrame(获取毛玻璃捕获区域(s.HostForm), True)
             重置毛玻璃Tick(s)
         Else
-            SetWindowDisplayAffinity(s.HostForm.Handle, WDA_NONE)
             If s.BackdropTimer IsNot Nothing Then
                 s.BackdropTimer.Stop()
                 s.BackdropTimer.Dispose()
@@ -2221,11 +2365,7 @@ Public Class ThisIsYourWindow
         '     而 SetWindowDisplayAffinity 的状态恢复需要数个 DWM 合成帧才能完成；高频翻转会
         '     让 DWM 长时间处于 EXCLUDE 状态，导致系统截图整体失效，违背开关初衷 ⇒ 强制纯事件驱动。
         '   - Auto + 长期 WDA + 帧率=0：用户显式选择纯事件驱动。
-        Dim needTick As Boolean = (_毛玻璃模式 = BackdropModeEnum.Auto OrElse _毛玻璃模式 = BackdropModeEnum.CaptionOnly) AndAlso
-                                  IsBackdropSupported AndAlso
-                                  _毛玻璃排除截屏 AndAlso
-                                  s.Renderer IsNot Nothing AndAlso
-                                  _毛玻璃帧率 > 0
+        Dim needTick As Boolean = False
 
         If Not needTick Then
             If s.BackdropTimer IsNot Nothing Then
@@ -2485,7 +2625,7 @@ Public Class ThisIsYourWindow
         s.LayoutSignature = -1
         RecalculateButtonBounds(s)
         更新阴影(s)
-        请求V3渲染(frm, 获取真实客户区矩形(frm), True)
+        请求GPU渲染(frm, 获取真实客户区矩形(frm), True)
         If 毛玻璃当前启用(s) Then 请求毛玻璃帧(s, True, forceImageMode:=True)
     End Sub
 
@@ -2556,7 +2696,7 @@ Public Class ThisIsYourWindow
         更新窗口内边距(s)
         s.HostForm.PerformLayout()
         RecalculateButtonBounds(s)
-        请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+        请求GPU渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
     End Sub
 
     Private Sub 启动全屏标题栏隐藏计时器(s As PerFormState)
@@ -2579,7 +2719,7 @@ Public Class ThisIsYourWindow
                     更新窗口内边距(s)
                     s.HostForm.PerformLayout()
                     RecalculateButtonBounds(s)
-                    请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
+                    请求GPU渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
                 Else
                     停止全屏标题栏隐藏计时器(s)
                 End If
@@ -2681,6 +2821,12 @@ Public Class ThisIsYourWindow
     Friend Sub RecalculateButtonBounds(s As PerFormState)
         If s Is Nothing Then Return
         Dim form = s.HostForm
+        If _useGpuChromeOverlay AndAlso Not s.ChromeOverlayActive AndAlso
+           form IsNot Nothing AndAlso form.IsHandleCreated Then
+            If CreateChromeOverlays(s) Then
+                RemoveHandler form.Paint, AddressOf 宿主窗口_Paint
+            End If
+        End If
         If _标题栏绑定控件 IsNot Nothing AndAlso _标题栏控件宿主窗体 Is Nothing Then
             _标题栏控件宿主窗体 = form
         End If
@@ -2700,12 +2846,13 @@ Public Class ThisIsYourWindow
         Dim iconNone As Boolean = (_图标来源 = IconSourceEnum.None OrElse Not s.HostForm.ShowIcon)
 
         ' 布局签名：所有影响按钮/图标位置的输入生成哈希，避免手工 bit-pack 截断导致缓存误命中。
-        Dim sig As Long = HashCode.Combine(w, V3_DpiContext.FromControl(form).Dpi, bdr, bw, bh, sp, iconSize, iconPadding)
+        Dim sig As Long = HashCode.Combine(w, D3D_DpiContext.FromControl(form).Dpi, bdr, bw, bh, sp, iconSize, iconPadding)
         sig = HashCode.Combine(sig, captionPadding, hasMin)
         sig = HashCode.Combine(sig, hasMax, hasFullScreen, posRight, iconNone,
                                s.IsFullScreen, s.FullScreenCaptionVisible)
         If s.LayoutSignature = sig Then
             同步标题栏绑定控件布局(s)
+            更新ChromeOverlays(s)
             Return
         End If
         s.LayoutSignature = sig
@@ -2718,6 +2865,7 @@ Public Class ThisIsYourWindow
         If (s.IsFullScreen AndAlso Not s.FullScreenCaptionVisible) OrElse
            captionLayoutRect.Width <= 0 OrElse captionLayoutRect.Height <= 0 Then
             同步标题栏绑定控件布局(s)
+            更新ChromeOverlays(s)
             Return
         End If
 
@@ -2763,6 +2911,7 @@ Public Class ThisIsYourWindow
             End If
         End If
         同步标题栏绑定控件布局(s)
+        更新ChromeOverlays(s)
     End Sub
 
 #End Region
@@ -2799,13 +2948,58 @@ Public Class ThisIsYourWindow
     End Function
 
     Friend Sub RenderGpuWindow(context As D3D_PaintContext, targetForm As Form)
+        RenderGpuWindowCore(context, targetForm, Size.Empty)
+    End Sub
+
+    Private Function RenderGpuClientBackdrop(context As D3D_PaintContext, targetForm As Form) As Boolean
+        Dim s = 查找状态(targetForm)
+        If context Is Nothing OrElse s Is Nothing Then Return False
+        Dim realSize = 获取真实客户区尺寸(targetForm)
+        Dim w = Math.Max(1, realSize.Width)
+        Dim h = Math.Max(1, realSize.Height)
+        Dim fullRect As New RectangleF(0, 0, w, h)
+        Dim captionRect = 获取标题栏内容矩形(targetForm, w, h)
+        Dim captionRectF As New RectangleF(captionRect.X, captionRect.Y, captionRect.Width, captionRect.Height)
+        Dim drew = 绘制毛玻璃背景_GPU(context, s, fullRect, captionRectF, s.Activated)
+        If Not drew AndAlso targetForm.BackColor.A > 0 Then
+            context.FillRectangle(fullRect, targetForm.BackColor)
+            drew = True
+        End If
+        Return drew
+    End Function
+
+    Friend Sub RenderGpuWindowViewport(context As D3D_PaintContext,
+                                       targetForm As Form,
+                                       viewportOrigin As Point,
+                                       viewportSize As Size)
+        If context Is Nothing OrElse targetForm Is Nothing Then Return
+        Dim oldTransform = context.DeviceContext.Transform
+        Try
+            context.DeviceContext.Transform = Matrix3x2.CreateTranslation(-viewportOrigin.X, -viewportOrigin.Y) * oldTransform
+            RenderGpuWindowCore(context, targetForm, viewportSize)
+        Finally
+            context.DeviceContext.Transform = oldTransform
+        End Try
+    End Sub
+
+    Private Sub RenderGpuWindowCore(context As D3D_PaintContext,
+                                    targetForm As Form,
+                                    viewportSize As Size)
         Dim s = 查找状态(targetForm)
         If context Is Nothing OrElse s Is Nothing Then Return
+        ' 标题栏布局必须使用整窗的真实客户区尺寸，不能使用 overlay 自身的裁剪尺寸。
+        ' 最小化还原期间 WinForms 可能短暂报告 0 或过渡尺寸；此时跳过一帧，
+        ' 防止按钮矩形按 overlay 尺寸重算后瞬间拉伸到整个标题栏。
+        Dim 真实尺寸 = 获取真实客户区尺寸(targetForm)
+        If targetForm.WindowState = FormWindowState.Minimized Then Return
+        If 真实尺寸.Width <= 0 OrElse 真实尺寸.Height <= 0 Then
+            If viewportSize.Width <= 0 OrElse viewportSize.Height <= 0 Then Return
+            真实尺寸 = viewportSize
+        End If
         RecalculateButtonBounds(s)
 
-        Dim w As Integer = Math.Max(1, CInt(Math.Ceiling(context.ClipBounds.Width)))
-        Dim h As Integer = Math.Max(1, CInt(Math.Ceiling(context.ClipBounds.Height)))
-        If w <= 0 OrElse h <= 0 Then Return
+        Dim w As Integer = 真实尺寸.Width
+        Dim h As Integer = 真实尺寸.Height
 
         Dim active As Boolean = s.Activated
         Dim fullRect As New RectangleF(0, 0, w, h)
@@ -2966,7 +3160,7 @@ Public Class ThisIsYourWindow
                 context.DeviceContext.DrawLine(New Vector2(cx, cy), New Vector2(cx + sz, cy + sz), pen, lw)
                 context.DeviceContext.DrawLine(New Vector2(cx + sz, cy), New Vector2(cx, cy + sz), pen, lw)
             Case HTMAXBUTTON
-                If s.HostForm.WindowState = FormWindowState.Maximized Then
+                If 窗口当前已最大化(s.HostForm) Then
                     Dim off As Single = sz * 0.25F
                     context.DeviceContext.DrawRectangle(New Vortice.Mathematics.Rect(cx + off, cy, sz - off, sz - off), pen, lw)
                     context.DeviceContext.DrawRectangle(New Vortice.Mathematics.Rect(cx, cy + off, sz - off, sz - off), pen, lw)
@@ -3087,7 +3281,7 @@ Public Class ThisIsYourWindow
     Private Function 获取省略标题文字(s As PerFormState, text As String, font As Font, maxWidth As Single) As String
         Dim width As Integer = Math.Max(0, CInt(Math.Floor(maxWidth)))
         Dim signature As Integer = HashCode.Combine(text, font.FontFamily.Name, font.SizeInPoints,
-                                                    font.Style, width, V3_DpiContext.FromControl(s.HostForm).Dpi)
+                                                    font.Style, width, D3D_DpiContext.FromControl(s.HostForm).Dpi)
         If s.TitleEllipsisSignature = signature Then Return s.TitleDisplayText
 
         Dim result As String = text
@@ -3123,48 +3317,131 @@ Public Class ThisIsYourWindow
     End Function
 
     ''' <summary>
-    ''' 兼容入口：在指定窗体当前 Paint HDC 上绘制标题栏与边框。
+    ''' 请求指定窗体的 V5 chrome overlay 呈现。
     ''' </summary>
     Public Sub PaintWindow(e As PaintEventArgs, targetForm As Form)
         If targetForm Is Nothing OrElse targetForm.IsDisposed Then Return
-        TryPaintWindowChrome(e, targetForm)
+        Dim state = 查找状态(targetForm)
+        If state IsNot Nothing AndAlso state.ChromeOverlayActive Then
+            更新ChromeOverlays(state)
+        End If
     End Sub
 
     Private Function TryPaintWindowChrome(e As PaintEventArgs, targetForm As Form) As Boolean
-        If e Is Nothing OrElse targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
-        If targetForm.Width <= 0 OrElse targetForm.Height <= 0 Then Return False
-
-        Try
-            Using scope = D3D_PaintBridge.BeginGpuPaint(e, targetForm, New WindowChromeRenderable(Me, targetForm))
-                If scope Is Nothing Then Return False
-                Using context = scope.CreateContext()
-                    If context Is Nothing Then Return False
-                    RenderGpuWindow(context, targetForm)
-                End Using
-            End Using
-            Return True
-        Catch ex As Exception
-            If D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) Then
-                Try : targetForm.Invalidate() : Catch : End Try
-                Return False
-            End If
-            Throw
-        End Try
+        ' V5 chrome 仅通过子 HWND overlay 呈现；Form Paint 不再承载 GPU 或 HDC 路线。
+        Return False
     End Function
 
-    Private NotInheritable Class WindowChromeRenderable
-        Implements V3_IGpuRenderable
+    ''' <summary>
+    ''' Caption/border child HWND used by the V5 chrome path. It never receives input:
+    ''' WM_NCHITTEST is returned as HTTRANSPARENT so the existing Form interceptor keeps
+    ''' ownership of drag, resize and system-button hit testing.
+    ''' </summary>
+    Friend NotInheritable Class ChromeOverlayControl
+        Inherits Control
+        Implements D3D_IGpuRenderable, V5_IGpuPresentationSource,
+                   V5_IGeometryUpdateSource, V5_ICoalescedPresentationSource
 
+        Private Const WM_NCHITTEST As Integer = &H84
+        Private Const WM_MOUSEACTIVATE As Integer = &H21
+        Private Const HTTRANSPARENT As Integer = -1
+        Private Const MA_NOACTIVATE As Integer = 3
         Private ReadOnly _owner As ThisIsYourWindow
         Private ReadOnly _form As Form
+        Private _viewportOrigin As Point
+        Private _viewportSize As Size
+        Private _geometryUpdateInProgress As Boolean
 
-        Public Sub New(owner As ThisIsYourWindow, form As Form)
+        Friend Sub New(owner As ThisIsYourWindow,
+                       form As Form,
+                       viewportOrigin As Point,
+                       regionSize As Size,
+                       viewportSize As Size)
             _owner = owner
             _form = form
+            _viewportOrigin = viewportOrigin
+            _viewportSize = viewportSize
+            SetBounds(viewportOrigin.X, viewportOrigin.Y, Math.Max(0, regionSize.Width), Math.Max(0, regionSize.Height))
+            SetStyle(ControlStyles.UserPaint Or ControlStyles.AllPaintingInWmPaint Or
+                     ControlStyles.Opaque Or ControlStyles.ResizeRedraw Or
+                     ControlStyles.SupportsTransparentBackColor, True)
+            TabStop = False
+            BackColor = Color.Transparent
         End Sub
 
-        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
-            _owner.RenderGpuWindow(context, _form)
+        Friend Function UpdateViewport(viewportOrigin As Point,
+                                       regionSize As Size,
+                                       viewportSize As Size,
+                                       Optional requestRender As Boolean = True) As Boolean
+            Dim changed = Left <> viewportOrigin.X OrElse Top <> viewportOrigin.Y OrElse
+                          Width <> Math.Max(0, regionSize.Width) OrElse Height <> Math.Max(0, regionSize.Height)
+            _viewportOrigin = viewportOrigin
+            _viewportSize = viewportSize
+            If changed Then
+                Dim ownsGeometryGate = Not _geometryUpdateInProgress
+                If ownsGeometryGate Then _geometryUpdateInProgress = True
+                Try
+                    SetBounds(viewportOrigin.X, viewportOrigin.Y, Math.Max(0, regionSize.Width), Math.Max(0, regionSize.Height))
+                Finally
+                    If ownsGeometryGate Then _geometryUpdateInProgress = False
+                End Try
+            End If
+            If changed AndAlso requestRender AndAlso IsHandleCreated Then
+                D3D_V5Presentation.RequestRender(Me, New Rectangle(Point.Empty, ClientSize))
+            End If
+            Return changed
+        End Function
+
+        Friend Sub BeginGeometryUpdate()
+            _geometryUpdateInProgress = True
+        End Sub
+
+        Friend Sub EndGeometryUpdate()
+            _geometryUpdateInProgress = False
+        End Sub
+
+        Friend ReadOnly Property IsGeometryUpdateInProgress As Boolean _
+            Implements V5_IGeometryUpdateSource.IsGeometryUpdateInProgress
+            Get
+                Return _geometryUpdateInProgress
+            End Get
+        End Property
+
+        Protected Overrides ReadOnly Property CreateParams As CreateParams
+            Get
+                Dim cp = MyBase.CreateParams
+                ' HTTRANSPARENT is handled in WndProc.  WS_EX_TRANSPARENT would
+                ' force sibling paint ordering and visibly flash during dragging.
+                cp.ExStyle = cp.ExStyle Or &H8000000 ' WS_EX_NOACTIVATE
+                Return cp
+            End Get
+        End Property
+
+        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            ' The swap-chain owns every pixel in this region.
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then
+                ' V5 never falls back to a CPU paint for this overlay.
+            End If
+        End Sub
+
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
+            If _owner Is Nothing OrElse _form Is Nothing OrElse _form.IsDisposed Then Return
+            _owner.RenderGpuWindowViewport(context, _form, _viewportOrigin, _viewportSize)
+        End Sub
+
+        Protected Overrides Sub WndProc(ByRef m As Message)
+            If m.Msg = WM_NCHITTEST Then
+                m.Result = New IntPtr(HTTRANSPARENT)
+                Return
+            End If
+            If m.Msg = WM_MOUSEACTIVATE Then
+                m.Result = New IntPtr(MA_NOACTIVATE)
+                Return
+            End If
+            MyBase.WndProc(m)
         End Sub
     End Class
 
@@ -3233,20 +3510,180 @@ Public Class ThisIsYourWindow
         Return _标题文字私有协议.Replace(TitleTextPrivateProtocolTitleToken, realTitle)
     End Function
 
+    Private Shared Function 获取CaptionOverlay(s As PerFormState) As ChromeOverlayControl
+        If s Is Nothing OrElse Not s.ChromeOverlayActive OrElse
+           s.ChromeOverlays Is Nothing OrElse s.ChromeOverlays.Count = 0 Then Return Nothing
+        ' 计算ChromeOverlay区域 always emits the caption region first.
+        Return s.ChromeOverlays(0)
+    End Function
+
 
     ''' <summary>请求指定窗体重绘标题栏区域。</summary>
     Public Sub InvalidateCaption(form As Form, Optional immediate As Boolean = False)
-        If form IsNot Nothing AndAlso form.IsHandleCreated Then
-            Dim size = 获取真实客户区尺寸(form)
-            请求V3渲染(form,
-                    New Rectangle(0, 0, size.Width, Math.Min(size.Height, 取缩放标题栏总高度(form))),
-                    immediate)
+        If form Is Nothing OrElse form.IsDisposed OrElse Not form.IsHandleCreated Then Return
+        Dim s = 查找状态(form)
+        If s Is Nothing Then Return
+        Dim size = 获取真实客户区尺寸(form)
+        Dim dirty As New Rectangle(0, 0, size.Width,
+                                   Math.Min(size.Height, 取缩放标题栏总高度(form)))
+        D3D_ControlSurfaceRegistry.MarkDirty(form, dirty, requestConsumers:=True)
+        If s.ChromeOverlayActive Then
+            Dim captionOverlay = 获取CaptionOverlay(s)
+            If captionOverlay IsNot Nothing AndAlso captionOverlay.Visible Then
+                D3D_V5Presentation.RequestRender(captionOverlay,
+                                                  New Rectangle(Point.Empty, captionOverlay.ClientSize))
+            End If
+        ElseIf TypeOf form Is V5_IGpuPresentationSource Then
+            D3D_V5Presentation.RequestRender(form,
+                                              dirty)
         End If
     End Sub
 
 #End Region
 
 #Region "附加 / 分离"
+
+    Private Function CreateChromeOverlays(s As PerFormState) As Boolean
+        If Not _useGpuChromeOverlay OrElse s Is Nothing OrElse s.HostForm Is Nothing Then Return False
+        If s.ChromeOverlays IsNot Nothing AndAlso s.ChromeOverlays.Count > 0 Then Return True
+
+        Try
+            s.ChromeOverlays = New List(Of ChromeOverlayControl)()
+            For Each region In 计算ChromeOverlay区域(s)
+                Dim overlay As New ChromeOverlayControl(Me, s.HostForm, region.Location, region.Size, 获取真实客户区尺寸(s.HostForm))
+                s.HostForm.Controls.Add(overlay)
+                确保ChromeOverlay位于内容之后(overlay)
+                s.ChromeOverlays.Add(overlay)
+            Next
+            s.ChromeOverlayActive = s.ChromeOverlays.Count > 0
+            D3D_RenderDiagnostics.V5ChromeOverlayCreated(s.ChromeOverlays.Count)
+            更新ChromeOverlays(s)
+            Return s.ChromeOverlayActive
+        Catch ex As Exception
+            D3D_RenderDiagnostics.V5ChromeOverlayCreateFailure(ex)
+            销毁ChromeOverlays(s)
+            Return False
+        End Try
+    End Function
+
+    Private Sub 更新ChromeOverlays(s As PerFormState)
+        If s Is Nothing OrElse Not s.ChromeOverlayActive OrElse s.ChromeOverlays Is Nothing Then Return
+        D3D_RenderDiagnostics.V5ChromeOverlayLayoutUpdated(s.IsFullScreen)
+        Dim fullSize = 获取真实客户区尺寸(s.HostForm)
+        Dim regionSignature As Long = HashCode.Combine(fullSize.Width, fullSize.Height, s.LayoutSignature, s.IsFullScreen)
+        regionSignature = HashCode.Combine(regionSignature, s.FullScreenCaptionVisible)
+        Dim regions As List(Of Rectangle)
+        If s.ChromeOverlayRegions IsNot Nothing AndAlso s.ChromeOverlayRegionsSignature = regionSignature Then
+            regions = s.ChromeOverlayRegions
+        Else
+            regions = 计算ChromeOverlay区域(s)
+            s.ChromeOverlayRegions = regions
+            s.ChromeOverlayRegionsSignature = regionSignature
+        End If
+        Dim count = Math.Min(regions.Count, s.ChromeOverlays.Count)
+        Dim changedOverlays As List(Of ChromeOverlayControl) = Nothing
+        For i As Integer = 0 To count - 1
+            Dim region = regions(i)
+            Dim nextVisible = s.HostForm.Visible AndAlso region.Width > 0 AndAlso region.Height > 0
+            Dim overlay = s.ChromeOverlays(i)
+            Dim visibilityChanged = (overlay.Visible <> nextVisible)
+            overlay.BeginGeometryUpdate()
+            Dim geometryChanged As Boolean
+            Try
+                If visibilityChanged Then
+                    D3D_RenderDiagnostics.V5ChromeOverlayVisibilityChanged()
+                    overlay.Visible = nextVisible
+                End If
+                ' 先切换可见状态，再请求新尺寸的 GPU 帧；否则还原阶段的请求会被
+                ' 不可见控件短路，overlay 可能先显示上一帧或清屏结果。
+                geometryChanged = overlay.UpdateViewport(region.Location, region.Size, fullSize, requestRender:=False)
+            Finally
+                overlay.EndGeometryUpdate()
+            End Try
+            确保ChromeOverlay位于内容之后(overlay)
+            If (visibilityChanged OrElse geometryChanged) AndAlso nextVisible Then
+                If changedOverlays Is Nothing Then changedOverlays = New List(Of ChromeOverlayControl)()
+                changedOverlays.Add(overlay)
+            End If
+        Next
+        For i As Integer = count To s.ChromeOverlays.Count - 1
+            Dim overlay = s.ChromeOverlays(i)
+            If overlay.Visible Then
+                overlay.BeginGeometryUpdate()
+                Try
+                    D3D_RenderDiagnostics.V5ChromeOverlayVisibilityChanged()
+                    overlay.Visible = False
+                Finally
+                    overlay.EndGeometryUpdate()
+                End Try
+            End If
+        Next
+        If changedOverlays IsNot Nothing Then
+            For Each overlay In changedOverlays
+                If overlay.IsHandleCreated AndAlso overlay.Visible Then
+                    D3D_V5Presentation.RequestRender(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
+                End If
+            Next
+        End If
+    End Sub
+
+    Private Shared Sub 确保ChromeOverlay位于内容之后(overlay As ChromeOverlayControl)
+        If overlay Is Nothing OrElse overlay.Parent Is Nothing OrElse overlay.IsDisposed Then Return
+        Dim parent = overlay.Parent
+        Dim overlayIndex As Integer = parent.Controls.GetChildIndex(overlay)
+        If overlayIndex < 0 Then Return
+
+        ' Controls index 0 is front-most. Move the overlay only when a normal
+        ' child has ended up behind it; repeated SendToBack calls themselves
+        ' generate z-order messages and can flash transparent HWNDs.
+        For i As Integer = overlayIndex + 1 To parent.Controls.Count - 1
+            If Not TypeOf parent.Controls(i) Is ChromeOverlayControl Then
+                overlay.SendToBack()
+                Exit For
+            End If
+        Next
+    End Sub
+
+    Private Function 计算ChromeOverlay区域(s As PerFormState) As List(Of Rectangle)
+        Dim regions As New List(Of Rectangle)()
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return regions
+        Dim full = 获取真实客户区尺寸(s.HostForm)
+        Dim w = Math.Max(0, full.Width)
+        Dim h = Math.Max(0, full.Height)
+        If w <= 0 OrElse h <= 0 Then Return regions
+
+        Dim caption = 获取标题栏内容矩形(s.HostForm, w, h)
+        If caption.Width > 0 AndAlso caption.Height > 0 Then regions.Add(caption)
+        If s.IsFullScreen Then Return regions
+
+        Dim bdr = Math.Min(Math.Max(0, 取缩放边框厚度(s.HostForm)), Math.Min(w, h) \ 2)
+        If bdr <= 0 Then Return regions
+        regions.Add(New Rectangle(0, 0, w, bdr))
+        regions.Add(New Rectangle(0, Math.Max(0, h - bdr), w, bdr))
+        If h > bdr * 2 Then
+            regions.Add(New Rectangle(0, bdr, bdr, h - bdr * 2))
+            regions.Add(New Rectangle(Math.Max(0, w - bdr), bdr, bdr, h - bdr * 2))
+        End If
+        Return regions
+    End Function
+
+    Private Sub 销毁ChromeOverlays(s As PerFormState)
+        If s Is Nothing Then Return
+        If s.ChromeOverlays IsNot Nothing Then
+            D3D_RenderDiagnostics.V5ChromeOverlayDestroyed(s.ChromeOverlays.Count)
+            For Each overlay In s.ChromeOverlays.ToArray()
+                Try
+                    If overlay.Parent IsNot Nothing Then overlay.Parent.Controls.Remove(overlay)
+                    overlay.Dispose()
+                Catch
+                End Try
+            Next
+        End If
+        s.ChromeOverlays = Nothing
+        s.ChromeOverlayActive = False
+        s.ChromeOverlayRegions = Nothing
+        s.ChromeOverlayRegionsSignature = Long.MinValue
+    End Sub
 
     ''' <summary>
     ''' 将当前样式附加到目标窗体。可多次调用以附加到不同窗体，所有窗体共享同一套外观属性。
@@ -3325,7 +3762,8 @@ Public Class ThisIsYourWindow
         setStyleMethod?.Invoke(targetForm, New Object() {
             ControlStyles.OptimizedDoubleBuffer Or ControlStyles.AllPaintingInWmPaint, True})
 
-        AddHandler targetForm.Paint, AddressOf 宿主窗口_Paint
+        Dim chromeOverlayActive = CreateChromeOverlays(s)
+        If Not chromeOverlayActive Then AddHandler targetForm.Paint, AddressOf 宿主窗口_Paint
         AddHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
         AddHandler targetForm.HandleDestroyed, AddressOf 宿主窗口_HandleDestroyed
         AddHandler targetForm.VisibleChanged, AddressOf 宿主窗口_VisibleChanged
@@ -3334,7 +3772,8 @@ Public Class ThisIsYourWindow
         AddHandler targetForm.StyleChanged, AddressOf 宿主窗口_StyleChanged
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
-        请求V3渲染(targetForm, 获取真实客户区矩形(targetForm), True)
+        更新ChromeOverlays(s)
+        请求GPU渲染(targetForm, 获取真实客户区矩形(targetForm), True)
         更新阴影(s)
         应用毛玻璃状态(s)
     End Sub
@@ -3413,12 +3852,12 @@ Public Class ThisIsYourWindow
         End If
         If s.Renderer IsNot Nothing Then
             Try
-                If targetForm.IsHandleCreated Then SetWindowDisplayAffinity(targetForm.Handle, WDA_NONE)
             Catch
             End Try
             s.Renderer.Dispose()
             s.Renderer = Nothing
         End If
+        销毁ChromeOverlays(s)
         RemoveHandler targetForm.Paint, AddressOf 宿主窗口_Paint
         RemoveHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
         RemoveHandler targetForm.HandleDestroyed, AddressOf 宿主窗口_HandleDestroyed
@@ -3512,7 +3951,7 @@ Public Class ThisIsYourWindow
         更新阴影(s)
 
         ' ── 强制重绘 ──
-        请求V3渲染(targetForm, 获取真实客户区矩形(targetForm), True)
+        请求GPU渲染(targetForm, 获取真实客户区矩形(targetForm), True)
     End Sub
 
     ''' <summary>
@@ -3696,7 +4135,7 @@ Public Class ThisIsYourWindow
                     If minimizedNow Then
                         ' 最小化阶段没有可见客户区，避免把一次隐藏态 WM_SIZE 扩散成全量重绘。
                     ElseIf Not _owner.可跳过WMSize客户区刷新(_state, clientSizeChanged) Then
-                        请求V3渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm))
+                        请求GPU渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm))
                     Else
                         _owner.InvalidateCaption(_state.HostForm)
                     End If
@@ -3719,7 +4158,7 @@ Public Class ThisIsYourWindow
                         _owner.InvalidateTitleText(_state, True)
                     End If
                     If Not _owner.毛玻璃当前启用(_state) Then
-                        请求V3渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm))
+                        请求GPU渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm))
                     End If
                     If activated AndAlso Not _state.AnimatingClose Then _owner.更新阴影(_state)
                     Return
@@ -3900,7 +4339,7 @@ Public Class ThisIsYourWindow
                     End If
                     MyBase.WndProc(m)
                     If m.WParam <> IntPtr.Zero AndAlso _state.PendingFirstPaintRestore Then
-                        请求V3渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm), True)
+                        请求GPU渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm), True)
                     End If
                     If m.WParam <> IntPtr.Zero AndAlso _owner._显示动画模式 <> WindowShowAnimationMode.DWM Then
                         Try

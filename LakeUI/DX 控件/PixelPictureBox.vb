@@ -8,7 +8,7 @@ Imports D2D = Vortice.Direct2D1
 ''' </summary>
 <DefaultEvent("SelectionChanged")>
 Public Class PixelPictureBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     ''' <summary>当框选区域发生变化时引发。</summary>
     Public Event SelectionChanged As EventHandler
@@ -33,21 +33,21 @@ Public Class PixelPictureBox
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             更新滚动区域()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     ''' <summary>如果启用了强制居中模式，则将框选矩形居中到图片中心；否则原样返回。</summary>
@@ -281,7 +281,7 @@ Public Class PixelPictureBox
             _zoomFactor = 0
             更新缩放范围()
             更新滚动区域()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -295,7 +295,7 @@ Public Class PixelPictureBox
             最大像素边长 = Math.Max(1, value)
             更新缩放范围()
             更新滚动区域()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -335,7 +335,7 @@ Public Class PixelPictureBox
                 If value AndAlso HasSelection Then
                     _selectionRect = 应用强制居中(_selectionRect)
                 End If
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -348,7 +348,7 @@ Public Class PixelPictureBox
         End Get
         Set(value As Rectangle)
             _selectionRect = 应用强制居中(value)
-            请求V3渲染()
+            请求GPU渲染()
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -362,7 +362,7 @@ Public Class PixelPictureBox
         Set(value As Size)
             Dim r As New Rectangle(_selectionRect.Location, value)
             _selectionRect = 应用强制居中(约束矩形到图片(r))
-            请求V3渲染()
+            请求GPU渲染()
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -378,7 +378,7 @@ Public Class PixelPictureBox
     ''' <summary>清除当前框选区域。</summary>
     Public Sub ClearSelection()
         _selectionRect = New Rectangle(0, 0, 0, 0)
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent SelectionChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -474,7 +474,7 @@ Public Class PixelPictureBox
     End Sub
 
 <Category("LakeUI"),
-     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
+     Description("背景采样源。设置后记录关联源控件；GPU 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -483,10 +483,15 @@ Public Class PixelPictureBox
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 
     Private _zoomFactor As Single = 0
     Private _minZoom As Single = 1
@@ -495,8 +500,8 @@ Public Class PixelPictureBox
     Private _scrollX As Integer = 0
     Private _scrollY As Integer = 0
 
-    Private ReadOnly _vScrollBar As New V3_ScrollBarRenderer()
-    Private ReadOnly _hScrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _vScrollBar As New D3D_ScrollBarRenderer()
+    Private ReadOnly _hScrollBar As New D3D_ScrollBarRenderer()
 
     Private _showVScroll As Boolean = False
     Private _showHScroll As Boolean = False
@@ -582,7 +587,7 @@ Public Class PixelPictureBox
 
     Private Function 获取有效视口大小() As Size
         Dim bw As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
-        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + D3D_ScrollBarRenderer.Margin
         Dim w As Integer = Me.Width - bw * 2 - If(_showVScroll, sbReserve, 0)
         Dim h As Integer = Me.Height - bw * 2 - If(_showHScroll, sbReserve, 0)
         Return New Size(Math.Max(0, w), Math.Max(0, h))
@@ -616,7 +621,7 @@ Public Class PixelPictureBox
 
         Dim scaledSize As Size = 获取缩放图片尺寸()
         Dim bw As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
-        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + D3D_ScrollBarRenderer.Margin
 
         Dim fullW As Integer = Me.Width - bw * 2
         Dim fullH As Integer = Me.Height - bw * 2
@@ -801,7 +806,7 @@ Public Class PixelPictureBox
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         更新滚动区域()
@@ -812,7 +817,7 @@ Public Class PixelPictureBox
         绘制水平滚动条_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -947,7 +952,7 @@ Public Class PixelPictureBox
                 If newOff <> _scrollY Then
                     _scrollY = newOff
                     更新滚动区域()
-                    请求V3渲染()
+                    请求GPU渲染()
                     Return
                 End If
             End If
@@ -956,7 +961,7 @@ Public Class PixelPictureBox
                 If newHOff <> _scrollX Then
                     _scrollX = newHOff
                     更新滚动区域()
-                    请求V3渲染()
+                    请求GPU渲染()
                     Return
                 End If
             End If
@@ -997,7 +1002,7 @@ Public Class PixelPictureBox
             Dim py As Integer = Math.Max(0, Math.Min(CInt(Math.Floor(imgPt.Y)), _image.Height - 1))
             _selectionRect = New Rectangle(px, py, 0, 0)
             _dragSelectionStart = _selectionRect
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
     End Sub
@@ -1010,14 +1015,14 @@ Public Class PixelPictureBox
             Dim viewport As Size = 获取有效视口大小()
             _scrollY = _vScrollBar.DragMove(e.Y, 获取缩放图片尺寸().Height, viewport.Height)
             更新滚动区域()
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
         If _hScrollBar.IsDragging Then
             Dim viewport As Size = 获取有效视口大小()
             _scrollX = _hScrollBar.DragMoveHorizontal(e.X, 获取缩放图片尺寸().Width, viewport.Width)
             更新滚动区域()
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1028,7 +1033,7 @@ Public Class PixelPictureBox
                 _scrollX = _dragScrollStart.X - dx
                 _scrollY = _dragScrollStart.Y - dy
                 更新滚动区域()
-                请求V3渲染()
+                请求GPU渲染()
 
             Case DragMode.MoveSelection
                 If _image IsNot Nothing AndAlso Not _selectionForceCenter Then
@@ -1039,7 +1044,7 @@ Public Class PixelPictureBox
                     newX = Math.Max(0, Math.Min(newX, _image.Width - _dragSelectionStart.Width))
                     newY = Math.Max(0, Math.Min(newY, _image.Height - _dragSelectionStart.Height))
                     _selectionRect = New Rectangle(newX, newY, _dragSelectionStart.Width, _dragSelectionStart.Height)
-                    请求V3渲染()
+                    请求GPU渲染()
                 End If
 
             Case DragMode.ResizeSelection
@@ -1067,7 +1072,7 @@ Public Class PixelPictureBox
                         If y2 < y1 Then ry = y1 - rh
                     End If
                     _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(rx, ry, rw, rh)))
-                    请求V3渲染()
+                    请求GPU渲染()
                 End If
 
             Case DragMode.None
@@ -1077,7 +1082,7 @@ Public Class PixelPictureBox
                 Dim needInvalidate As Boolean = False
                 If _vScrollBar.UpdateHover(e.Location) Then needInvalidate = True
                 If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-                If needInvalidate Then 请求V3渲染()
+                If needInvalidate Then 请求GPU渲染()
         End Select
     End Sub
 
@@ -1101,7 +1106,7 @@ Public Class PixelPictureBox
         Dim needInvalidate As Boolean = False
         If _vScrollBar.ResetHover() Then needInvalidate = True
         If _hScrollBar.ResetHover() Then needInvalidate = True
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
         Me.Cursor = Cursors.Default
     End Sub
 
@@ -1128,7 +1133,7 @@ Public Class PixelPictureBox
         _scrollY = CInt(Math.Round(imgPt.Y * _zoomFactor - (e.Location.Y - bw)))
 
         更新滚动区域()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub 更新光标(clientPt As Point)
@@ -1224,7 +1229,7 @@ Public Class PixelPictureBox
         End If
 
         _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(newX, newY, newW, newH)))
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Function 约束矩形到图片(r As Rectangle) As Rectangle
@@ -1256,12 +1261,12 @@ Public Class PixelPictureBox
         MyBase.OnSizeChanged(e)
         更新缩放范围()
         更新滚动区域()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
 #End Region

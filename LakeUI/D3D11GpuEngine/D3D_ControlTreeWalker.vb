@@ -1,10 +1,10 @@
 Imports System.Runtime.InteropServices
 
 ''' <summary>
-''' V3_ControlTreeWalker 是后续控件迁移使用的非渲染树遍历辅助。
-''' 它不创建 GPU 资源，不绘制控件，只枚举实现 V3_IGpuRenderable 的控件并提供窗口坐标映射。
+''' D3D_ControlTreeWalker 是后续控件迁移使用的非渲染树遍历辅助。
+''' 它不创建 GPU 资源，不绘制控件，只枚举实现 D3D_IGpuRenderable 的控件并提供窗口坐标映射。
 ''' </summary>
-Friend NotInheritable Class V3_ControlTreeWalker
+Friend NotInheritable Class D3D_ControlTreeWalker
     Private Sub New()
     End Sub
 
@@ -13,7 +13,7 @@ Friend NotInheritable Class V3_ControlTreeWalker
 
         For Each child As Control In root.Controls
             If child Is Nothing OrElse child.IsDisposed Then Continue For
-            If TypeOf child Is V3_IGpuRenderable Then Yield child
+            If TypeOf child Is D3D_IGpuRenderable Then Yield child
 
             For Each nested In EnumerateGpuRenderables(child)
                 Yield nested

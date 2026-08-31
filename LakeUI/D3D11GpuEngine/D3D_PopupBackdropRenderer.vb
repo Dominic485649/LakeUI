@@ -15,7 +15,7 @@
 '''
 ''' 坑点：
 ''' • <see cref="WaitForFrame"/> 只等待 worker 空闲；它不是强制同步重绘。调用方仍需 Invalidate / Paint。
-''' • <see cref="Draw"/> 使用 D3D_BackdropSurfaceRenderer 的 GPU 合成路径一次性输出到 GDI HDC，适合顶层 popup；
+''' • <see cref="Draw"/> 使用 D3D_BackdropSurfaceRenderer 的 D2D/GPU 合成路径一次性输出到 popup surface；
 '''   控件内的背景穿透应走 <see cref="D3D_BackgroundPenetration"/> 采样宿主容器。
 ''' </remarks>
 Friend NotInheritable Class D3D_PopupBackdropRenderer
@@ -82,20 +82,6 @@ Friend NotInheritable Class D3D_PopupBackdropRenderer
         If Mode = PopupBackdropMode.None OrElse _renderer Is Nothing Then Return True
         Return _renderer.WaitForIdle(timeoutMilliseconds) AndAlso _renderer.HasFrame
     End Function
-
-    Public Sub Draw(g As Graphics, target As Rectangle)
-        If Not HasFrame OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
-
-        Try
-            _renderer.DrawTo(g, target, TintColor, NoiseOpacity)
-        Catch ex As Exception
-            If D3D_DeviceGlobals.HandleDeviceLost(ex) Then
-                Try : _host?.Invalidate() : Catch : End Try
-                Return
-            End If
-            Throw
-        End Try
-    End Sub
 
     Public Function Draw(context As D3D_PaintContext, target As RectangleF) As Boolean
         If Not HasFrame OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return False

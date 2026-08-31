@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class UltraDetailListView
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Public Event SelectedIndexChanged As EventHandler
     Public Event ItemClick As EventHandler(Of ListItemEventArgs)
@@ -734,7 +734,7 @@ Public Class UltraDetailListView
         InvalidateMeasureCache()
         AttachAllItems()
         重建显示列表()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
 #End Region
@@ -793,7 +793,7 @@ Public Class UltraDetailListView
         全部项高度缓存失效()
         If _updateCount <= 0 Then
             重建显示列表(changedSubItem)
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -803,16 +803,16 @@ Public Class UltraDetailListView
         _columnXDirty = True
         If _updateCount <= 0 Then
             重建显示列表()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Friend Sub InvalidateColumnVisual()
-        InvalidateV3TextResources()
-        If _updateCount <= 0 Then 请求V3渲染()
+        InvalidateGpuTextResources()
+        If _updateCount <= 0 Then 请求GPU渲染()
     End Sub
 
-    Private Sub InvalidateV3TextResources()
+    Private Sub InvalidateGpuTextResources()
         D3D_RenderCore.InvalidateExistingTextResources(Me)
     End Sub
 
@@ -919,7 +919,7 @@ Public Class UltraDetailListView
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -927,7 +927,7 @@ Public Class UltraDetailListView
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             重建显示列表()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -936,12 +936,12 @@ Public Class UltraDetailListView
             field = value
             全部项高度缓存失效()
             重建显示列表()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function Dpi(value As Integer) As Integer
@@ -1242,7 +1242,7 @@ Public Class UltraDetailListView
 
     Private _backgroundSource As Control = Nothing
     ''' <summary>
-    ''' 背景采样源（超容器背景映射）。设置后控件会通过 V3 背景图采样此控件作为底图，
+    ''' 背景采样源（超容器背景映射）。设置后控件会通过 GPU 背景图采样此控件作为底图，
     ''' 从而实现跨越任意层级的"穿透显示"效果；为 Nothing 时不进行背景采样。
     ''' </summary>
     <Category("LakeUI"),
@@ -1255,7 +1255,7 @@ Public Class UltraDetailListView
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -1457,7 +1457,7 @@ Public Class UltraDetailListView
         Set(value As Padding)
             If 内容边距 <> value Then
                 内容边距 = value
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -1758,7 +1758,7 @@ Public Class UltraDetailListView
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -1874,6 +1874,11 @@ Public Class UltraDetailListView
         End Set
     End Property
 
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
+
 #End Region
 
 #Region "行为属性"
@@ -1892,7 +1897,7 @@ Public Class UltraDetailListView
                 _selectedIndices.Clear()
                 _selectedIndices.Add(first)
                 _selectedMin = first
-                请求V3渲染()
+                请求GPU渲染()
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -1925,9 +1930,9 @@ Public Class UltraDetailListView
 #Region "内部状态"
 
     Private _scrollOffset As Integer = 0
-    Private ReadOnly _scrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _scrollBar As New D3D_ScrollBarRenderer()
     Private _hScrollOffset As Integer = 0
-    Private ReadOnly _hScrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _hScrollBar As New D3D_ScrollBarRenderer()
     Private ReadOnly _selectedIndices As New HashSet(Of Integer)
     ''' <summary>选中集合中的最小索引；-1 表示无选中。维护此值避免 SelectedIndex 每次 O(N) 扫描。</summary>
     Private _selectedMin As Integer = -1
@@ -1942,14 +1947,14 @@ Public Class UltraDetailListView
     Private _moreSymbolFont As Font = Nothing
     Private _moreSymbolFontKey As Single = 0F
 
-    ' --- V3 绘制上下文 ---
+    ' --- GPU 绘制上下文 ---
 
     Private _columnResizeIndex As Integer = -1
     Private _columnResizeStartX As Integer = 0
     Private _columnResizeStartWidth As Integer = 0
     Private Const ColumnResizeHitZone As Integer = 4
 
-    Private ReadOnly _hoverAnim As New V3_AnimationHelper(Me) With {.Duration = 150}
+    Private ReadOnly _hoverAnim As New D3D_AnimationHelper(Me) With {.Duration = 150}
     Private _hoverAnimFromY As Single
     Private _hoverAnimFromH As Single
     Private _hoverAnimToY As Single
@@ -2014,7 +2019,7 @@ Public Class UltraDetailListView
                 _selectedMin = value
                 _selectionAnchor = value
             End If
-            请求V3渲染()
+            请求GPU渲染()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -2103,7 +2108,7 @@ Public Class UltraDetailListView
             changed = True
         End If
         If changed Then
-            请求V3渲染()
+            请求GPU渲染()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End If
     End Sub
@@ -2216,14 +2221,14 @@ Public Class UltraDetailListView
 
     Friend Sub InvalidateItemFontResources(Optional changedSubItem As ListSubItem = Nothing)
         处理标签编辑单元格刷新(changedSubItem)
-        InvalidateV3TextResources()
+        InvalidateGpuTextResources()
         全部项高度缓存失效()
         _columnXDirty = True
         If _updateCount <= 0 Then
             重建显示列表(changedSubItem)
-            请求V3渲染()
+            请求GPU渲染()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
 #End Region
@@ -2253,7 +2258,7 @@ Public Class UltraDetailListView
         Dim w As Integer = Me.Width - inset * 2 - Me.Padding.Horizontal
         Dim h As Integer = Me.Height - inset - Me.Padding.Bottom - y
         If 需要横向滚动条() Then
-            h -= (Dpi(滚动条宽度) + V3_ScrollBarRenderer.Margin * 2)
+            h -= (Dpi(滚动条宽度) + D3D_ScrollBarRenderer.Margin * 2)
         End If
         Return New Rectangle(x, y, Math.Max(0, w), Math.Max(0, h))
     End Function
@@ -2355,7 +2360,7 @@ Public Class UltraDetailListView
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         预计算滚动条布局()
@@ -2380,17 +2385,17 @@ Public Class UltraDetailListView
         绘制横向滚动条_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 填充矩形_GPU(context As D3D_PaintContext, rect As RectangleF, color As Color)
@@ -2803,7 +2808,7 @@ Public Class UltraDetailListView
             Dim contentRect = 获取内容区域()
             Dim inset As Integer = 获取边框内边距()
             Dim extraTop As Integer = contentRect.Y - inset
-            Dim hsbSpace As Integer = If(需要横向滚动条(), Dpi(滚动条宽度) + V3_ScrollBarRenderer.Margin * 2, 0)
+            Dim hsbSpace As Integer = If(需要横向滚动条(), Dpi(滚动条宽度) + D3D_ScrollBarRenderer.Margin * 2, 0)
             Dim extraBottom As Integer = Me.Padding.Bottom + hsbSpace
             Dim s As Single = DpiScale()
             _scrollBar.ComputeLayout(Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
@@ -2905,7 +2910,7 @@ Public Class UltraDetailListView
             If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
             Dim hitRow = 命中测试行(e.Location)
             更新悬停(hitRow)
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -2916,7 +2921,7 @@ Public Class UltraDetailListView
             Dim visibleW = 获取可见列宽()
             _hScrollOffset = _hScrollBar.DragMoveHorizontal(e.X, totalW, visibleW)
             If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -2933,7 +2938,7 @@ Public Class UltraDetailListView
             If _isDragReordering Then
                 隐藏截断提示()
                 _dragReorderInsertIndex = 计算拖动排序插入位置(e.Y)
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
 
@@ -2967,7 +2972,7 @@ Public Class UltraDetailListView
                             _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
                         End If
                         _dragReorderInsertIndex = _dragReorderSourceIndex
-                        请求V3渲染()
+                        请求GPU渲染()
                         Return
                     ElseIf 允许多选 Then
                         开始框选()
@@ -2978,7 +2983,7 @@ Public Class UltraDetailListView
                 隐藏截断提示()
                 _dragCurrent = e.Location
                 更新拖选坐标并应用选择(e.Location)
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
@@ -2986,7 +2991,7 @@ Public Class UltraDetailListView
         Dim needInvalidate As Boolean = False
         If _scrollBar.UpdateHover(e.Location) Then needInvalidate = True
         If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
 
         If 列标题可见 AndAlso _columns.Count > 0 AndAlso 允许调整列宽 Then
             Dim headerRect = 获取列标题区域()
@@ -3025,7 +3030,7 @@ Public Class UltraDetailListView
             Dim newOff = _scrollBar.TrackClick(e.Location, _scrollOffset, _displayRows.Count, visCount)
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
@@ -3037,7 +3042,7 @@ Public Class UltraDetailListView
             Dim newHOff = _hScrollBar.TrackClickHorizontal(e.Location, _hScrollOffset, totalW, visibleW)
             If newHOff <> _hScrollOffset Then
                 _hScrollOffset = newHOff
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
@@ -3062,7 +3067,7 @@ Public Class UltraDetailListView
             If row.Type = DisplayRowType.GroupHeader Then
                 row.Group.IsCollapsed = Not row.Group.IsCollapsed
                 重建显示列表()
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
@@ -3087,7 +3092,7 @@ Public Class UltraDetailListView
             _dragReorderSourceIndices.Clear()
             _dragReorderInsertIndex = -1
             _mouseDownInContent = False
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -3097,7 +3102,7 @@ Public Class UltraDetailListView
             _scrollBar.EndDrag()
             _hScrollBar.EndDrag()
             _columnResizeIndex = -1
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -3121,7 +3126,7 @@ Public Class UltraDetailListView
         Dim needInvalidate2 As Boolean = False
         If _scrollBar.ResetHover() Then needInvalidate2 = True
         If _hScrollBar.ResetHover() Then needInvalidate2 = True
-        If needInvalidate2 Then 请求V3渲染()
+        If needInvalidate2 Then 请求GPU渲染()
         Me.Cursor = Cursors.Default
     End Sub
 
@@ -3134,24 +3139,24 @@ Public Class UltraDetailListView
             If _columns.Count > 0 AndAlso 需要横向滚动条() Then
                 Dim totalW = 获取总列宽()
                 Dim visibleW = 获取可见列宽()
-                Dim newHOff = V3_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, totalW, visibleW)
+                Dim newHOff = D3D_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, totalW, visibleW)
                 If newHOff <> _hScrollOffset Then
                     _hScrollOffset = newHOff
                     If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
-                    请求V3渲染()
+                    请求GPU渲染()
                 End If
             End If
             Return
         End If
         If _displayRows.Count = 0 Then Return
         Dim visCount = 估算可见行数()
-        Dim newOff = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _displayRows.Count, visCount, 3)
+        Dim newOff = D3D_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _displayRows.Count, visCount, 3)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
             If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
             Dim hitRow = 命中测试行(e.Location)
             更新悬停(hitRow)
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -3224,7 +3229,7 @@ Public Class UltraDetailListView
             ElseIf row.Type = DisplayRowType.GroupHeader Then
                 row.Group.IsCollapsed = Not row.Group.IsCollapsed
                 重建显示列表()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End If
     End Sub
@@ -3271,7 +3276,7 @@ Public Class UltraDetailListView
                     _dragReorderSourceIndex = -1
                     _dragReorderSourceIndices.Clear()
                     _dragReorderInsertIndex = -1
-                    请求V3渲染()
+                    请求GPU渲染()
                     e.Handled = True
                 End If
             Case Keys.Up
@@ -3426,7 +3431,7 @@ Public Class UltraDetailListView
         nextOffset = Math.Max(0, Math.Min(_displayRows.Count - 1, nextOffset))
         If nextOffset <> _scrollOffset Then
             _scrollOffset = nextOffset
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -3568,49 +3573,6 @@ Public Class UltraDetailListView
 
     Private NotInheritable Class LabelEditTextBox
         Inherits ModernTextBox
-
-        Private _frozenBackground As Image
-
-        Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
-        End Sub
-
-        <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
-        Public Property FrozenBackground As Image
-            Get
-                Return _frozenBackground
-            End Get
-            Set(value As Image)
-                If Object.ReferenceEquals(_frozenBackground, value) Then Return
-                If _frozenBackground IsNot Nothing Then
-                    Try : _frozenBackground.Dispose() : Catch : End Try
-                End If
-                _frozenBackground = value
-                Invalidate()
-            End Set
-        End Property
-
-        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' V3 final pixels are emitted only by RenderGpu and returned through GPU→HDC.
-        End Sub
-
-        Public Overrides Sub RenderGpu(context As D3D_PaintContext)
-            If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
-            If _frozenBackground IsNot Nothing Then
-                context.DrawImage(_frozenBackground, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height))
-            ElseIf BackColor.A > 0 Then
-                context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), BackColor)
-            End If
-            MyBase.RenderGpu(context)
-        End Sub
-
-        Protected Overrides Sub Dispose(disposing As Boolean)
-            If disposing AndAlso _frozenBackground IsNot Nothing Then
-                Try : _frozenBackground.Dispose() : Catch : End Try
-                _frozenBackground = Nothing
-            End If
-            MyBase.Dispose(disposing)
-        End Sub
     End Class
 
     Private Sub 开始标签编辑等待(displayRowIndex As Integer, columnIndex As Integer)
@@ -3675,16 +3637,12 @@ Public Class UltraDetailListView
         Dim sub_ = item.SubItems(columnIndex)
         _editItem = item
         _editSubItem = sub_
-        Dim editBackground As Image = 创建编辑框背景快照(editBounds)
-        Dim fallbackBackColor As Color = 获取编辑框回退背景颜色(displayRowIndex)
-
         _editTextBox = New LabelEditTextBox With {
             .Text = sub_.Text,
             .Font = If(sub_.Font, Me.Font),
             .ForeColor = If(sub_.ForeColor <> Color.Empty, sub_.ForeColor, 项文本颜色),
             .BackColor1 = Color.Transparent,
-            .BackColor = fallbackBackColor,
-            .FrozenBackground = editBackground,
+            .BackgroundSource = Me,
             .BorderSize = 1,
             .BorderColor = 项高亮边框颜色,
             .BorderColorFocus = 项高亮边框颜色,
@@ -3696,7 +3654,7 @@ Public Class UltraDetailListView
         }
 
         ' 让 list view 的背景/文本缓存失效，避免编辑框采样时拍到旧文字。
-        请求V3渲染(editBounds)
+        请求GPU渲染(editBounds)
 
         Me.Controls.Add(_editTextBox)
         _editTextBox.BringToFront()
@@ -3779,12 +3737,6 @@ Public Class UltraDetailListView
         _editTextBox.Padding = editPadding
         _editTextBox.Font = If(_editSubItem.Font, Me.Font)
         _editTextBox.ForeColor = If(_editSubItem.ForeColor <> Color.Empty, _editSubItem.ForeColor, 项文本颜色)
-        Dim editBox = TryCast(_editTextBox, LabelEditTextBox)
-        If editBox Is Nothing Then
-            结束标签编辑(True)
-            Return
-        End If
-        editBox.FrozenBackground = 创建编辑框背景快照(editBounds)
         _editTextBox.BringToFront()
     End Sub
 
@@ -3799,42 +3751,6 @@ Public Class UltraDetailListView
     Private Function 列仍指向子项(item As ListItem, subItem As ListSubItem, columnIndex As Integer) As Boolean
         Return item IsNot Nothing AndAlso subItem IsNot Nothing AndAlso 列可编辑(columnIndex) AndAlso
                columnIndex < item.SubItems.Count AndAlso Object.ReferenceEquals(item.SubItems(columnIndex), subItem)
-    End Function
-
-    Private Function 创建编辑框背景快照(cellRect As Rectangle) As Image
-        If cellRect.Width <= 0 OrElse cellRect.Height <= 0 Then Return Nothing
-        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return Nothing
-
-        Dim fullBmp As Bitmap = Nothing
-        Try
-            fullBmp = New Bitmap(Me.Width, Me.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
-            Using g = Graphics.FromImage(fullBmp)
-                g.Clear(Color.Transparent)
-                Using pea As New PaintEventArgs(g, Me.ClientRectangle)
-                    InvokePaintBackground(Me, pea)
-                    InvokePaint(Me, pea)
-                End Using
-            End Using
-
-            Dim clipped = Rectangle.Intersect(Me.ClientRectangle, cellRect)
-            If clipped.Width <= 0 OrElse clipped.Height <= 0 Then Return Nothing
-
-            Dim crop As New Bitmap(cellRect.Width, cellRect.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
-            Using g = Graphics.FromImage(crop)
-                g.Clear(Color.Transparent)
-                g.DrawImage(fullBmp,
-                            New Rectangle(clipped.X - cellRect.X, clipped.Y - cellRect.Y, clipped.Width, clipped.Height),
-                            clipped,
-                            GraphicsUnit.Pixel)
-            End Using
-            Return crop
-        Catch
-            Return Nothing
-        Finally
-            If fullBmp IsNot Nothing Then
-                Try : fullBmp.Dispose() : Catch : End Try
-            End If
-        End Try
     End Function
 
     Private Function 获取编辑框回退背景颜色(displayRowIndex As Integer) As Color
@@ -3942,7 +3858,7 @@ Public Class UltraDetailListView
             End If
         End If
 
-        请求V3渲染()
+        请求GPU渲染()
         If shouldRefocus AndAlso _editTextBox Is Nothing Then Me.Focus()
     End Sub
 
@@ -4049,7 +3965,7 @@ Public Class UltraDetailListView
         If displayRowIndex < 0 OrElse displayRowIndex >= _displayRows.Count Then Return
         If displayRowIndex < _scrollOffset Then
             _scrollOffset = displayRowIndex
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
         Dim changed = False
@@ -4060,7 +3976,7 @@ Public Class UltraDetailListView
         End While
         If changed Then
             校正滚动偏移()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -4113,7 +4029,7 @@ Public Class UltraDetailListView
         If _updateCount <= 0 Then
             _updateCount = 0
             重建显示列表()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -4471,13 +4387,13 @@ Public Class UltraDetailListView
 
         If 动画时长 <= 0 OrElse Not Me.IsHandleCreated Then
             _hoverAnimActive = False
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
         If newIndex < 0 Then
             _hoverAnimActive = False
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -4485,7 +4401,7 @@ Public Class UltraDetailListView
         Dim newH = _displayRows(newIndex).Height
         If newY < 0 Then
             _hoverAnimActive = False
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -4506,7 +4422,7 @@ Public Class UltraDetailListView
         _hoverAnim.AnimateTo(1)
     End Sub
 
-    Private Sub 悬停动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+    Private Sub 悬停动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
         If Not _hoverAnimActive Then
             sink.SuppressInvalidate()
             Return
@@ -4548,7 +4464,7 @@ Public Class UltraDetailListView
             重建显示列表()
         End If
         校正横向滚动偏移()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)
@@ -4563,14 +4479,14 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        InvalidateV3TextResources()
+        InvalidateGpuTextResources()
         全部项高度缓存失效()
         _moreSymbolFont?.Dispose()
         _moreSymbolFont = Nothing
         _moreSymbolFontKey = 0F
         _columnXDirty = True
         重建显示列表()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
@@ -4581,7 +4497,7 @@ Public Class UltraDetailListView
         _moreSymbolFontKey = 0F
         _columnXDirty = True
         重建显示列表()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Friend Sub 释放资源()

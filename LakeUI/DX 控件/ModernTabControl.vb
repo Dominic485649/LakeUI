@@ -12,7 +12,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernTabControl
-    Implements IOuterToInnerRefreshFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements IOuterToInnerRefreshFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "内部类型"
     ''' <summary>
@@ -25,7 +25,7 @@ Public Class ModernTabControl
         Friend Property Owner As ModernTabControl
 
         Private Sub 通知父级重绘()
-            Owner?.请求V3渲染()
+            Owner?.请求GPU渲染()
         End Sub
 
         Private _text As String = "ModernTab"
@@ -220,7 +220,7 @@ Public Class ModernTabControl
     ''' </summary>
     Private Class 透明内容面板
         Inherits Panel
-        Implements IOuterToInnerRefreshFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+        Implements IOuterToInnerRefreshFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
         Private _ownerControl As ModernTabControl
         Private _backgroundSource As Control
@@ -238,7 +238,7 @@ Public Class ModernTabControl
             _ownerControl = value
         End Sub
 
-        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
             Get
                 Return If(_ownerControl Is Nothing, GlobalOptions.SuperSamplingScaleEnum.OFF, _ownerControl.SuperSamplingScale)
             End Get
@@ -254,9 +254,14 @@ Public Class ModernTabControl
             Set(value As Control)
                 If _backgroundSource Is value Then Return
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End Set
         End Property
+
+        Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+            source = _backgroundSource
+            Return source IsNot Nothing
+        End Function
 
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
             If _backgroundSource IsNot Nothing Then Return
@@ -267,7 +272,7 @@ Public Class ModernTabControl
             If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
         End Sub
 
-        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
             If Width <= 0 OrElse Height <= 0 Then Return
             Dim source As Control = _backgroundSource
             If source IsNot Nothing Then
@@ -277,14 +282,14 @@ Public Class ModernTabControl
             End If
         End Sub
 
-        Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
             Return New Rectangle(Point.Empty, Me.Size)
         End Function
 
-        Private Sub 请求V3渲染(Optional dirtyRect As Rectangle = Nothing)
+        Private Sub 请求GPU渲染(Optional dirtyRect As Rectangle = Nothing)
             If IsDisposed Then Return
             Dim rect As Rectangle = If(dirtyRect.IsEmpty, New Rectangle(Point.Empty, Me.Size), dirtyRect)
-            V3_InvalidationRouter.RequestRender(Me, rect)
+            D3D_InvalidationRouter.RequestRender(Me, rect)
         End Sub
 
         Private Sub 解除背景穿透消费者()
@@ -320,7 +325,7 @@ Public Class ModernTabControl
 #Region "构造"
     Private ReadOnly _标签页动画 As New Dictionary(Of Integer, TabAnimState)
     Private _悬停索引 As Integer = -1
-    Private ReadOnly _动画助手 As New V3_AnimationHelper(Me)
+    Private ReadOnly _动画助手 As New D3D_AnimationHelper(Me)
     Private _动画中 As Boolean = False
     Private ReadOnly _内容面板 As New 透明内容面板()
     Private ReadOnly 项目列表 As New List(Of ModernTab)
@@ -343,7 +348,7 @@ Public Class ModernTabControl
     Private _浮层显示 As Boolean = False
     Private _鼠标过滤器 As RibbonMouseFilter = Nothing
 
-    ' V3 渲染：每次 OnPaint 只请求窗口级 D3D compositor 刷新。
+    ' GPU 渲染：每次 OnPaint 只请求窗口级 D3D compositor 刷新。
     Private ReadOnly _绑定页状态 As New Dictionary(Of Control, BoundPageState)()
     Private _背景刷新版本 As Integer = 0
     Private _背景源已订阅 As Control = Nothing
@@ -431,7 +436,7 @@ Public Class ModernTabControl
         _悬停索引 = -1
         限制滚动范围()
         切换绑定控件()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub 确保Owner()
@@ -491,7 +496,7 @@ Public Class ModernTabControl
         If item IsNot Nothing AndAlso 项目列表.IndexOf(item) = _selectedIndex Then
             切换绑定控件()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Function 获取索引绑定控件(index As Integer) As Control
@@ -724,9 +729,9 @@ Public Class ModernTabControl
 
     Private Sub 提交绑定页切换首帧()
         If Me.IsDisposed Then Return
-        请求V3渲染()
+        请求GPU渲染()
         If _内容面板 IsNot Nothing AndAlso Not _内容面板.IsDisposed AndAlso _内容面板.Width > 0 AndAlso _内容面板.Height > 0 Then
-            V3_InvalidationRouter.RequestRender(_内容面板, New Rectangle(Point.Empty, _内容面板.Size))
+            D3D_InvalidationRouter.RequestRender(_内容面板, New Rectangle(Point.Empty, _内容面板.Size))
         End If
         If _当前绑定控件 IsNot Nothing AndAlso Not _当前绑定控件.IsDisposed Then
             请求绑定页V3渲染(_当前绑定控件)
@@ -814,7 +819,7 @@ Public Class ModernTabControl
                     切换绑定控件()
                 End Using
                 If _滚动偏移 <> oldScroll Then
-                    请求V3渲染(获取标签栏矩形())
+                    请求GPU渲染(获取标签栏矩形())
                 Else
                     请求选中项切换重绘(oldIndex, _selectedIndex)
                 End If
@@ -944,7 +949,7 @@ Public Class ModernTabControl
         If dirty.IsEmpty Then dirty = stripRect
         dirty = Rectangle.Intersect(stripRect, dirty)
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            请求V3渲染(dirty)
+            请求GPU渲染(dirty)
         End If
     End Sub
 #End Region
@@ -965,7 +970,7 @@ Public Class ModernTabControl
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
@@ -979,22 +984,22 @@ Public Class ModernTabControl
         绘制文本内容_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Friend Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Friend Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Friend Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Friend Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 请求绑定页V3渲染(ctrl As Control)
         If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(ctrl, New Rectangle(Point.Empty, ctrl.Size))
+        D3D_InvalidationRouter.RequestRender(ctrl, New Rectangle(Point.Empty, ctrl.Size))
     End Sub
 
     Private Sub 绘制图形内容_GPU(context As D3D_PaintContext)
@@ -1498,7 +1503,7 @@ Public Class ModernTabControl
             同步内容面板布局()
             切换绑定控件()
         End Using
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub 限制滚动范围()
@@ -1573,13 +1578,13 @@ Public Class ModernTabControl
         MyBase.OnResize(e)
         同步内容面板布局()
         限制滚动范围()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnLayout(e As LayoutEventArgs)
         MyBase.OnLayout(e)
         同步内容面板布局()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Friend Sub InvalidateLayoutCache()
@@ -1756,10 +1761,10 @@ Public Class ModernTabControl
         If Not 有活跃动画 Then
             停止动画驱动()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
-    Private Sub 动画驱动脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+    Private Sub 动画驱动脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
         sink.SuppressInvalidate()
     End Sub
 
@@ -1793,7 +1798,7 @@ Public Class ModernTabControl
             Dim totalW = CInt(获取标签页总宽度())
             _滚动偏移 = 滚动条DragMove(e.X, totalW, Me.Width)
             限制滚动范围()
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1829,7 +1834,7 @@ Public Class ModernTabControl
             End If
             needInvalidate = True
         End If
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1850,7 +1855,7 @@ Public Class ModernTabControl
             _滚动条IsHover = False
             needInvalidate = True
         End If
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1880,7 +1885,7 @@ Public Class ModernTabControl
                     _滚动偏移 = Math.Min(maxOff, _滚动偏移 + Me.Width)
                 End If
                 限制滚动范围()
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
             Dim hit = HitTestTab(e.Location)
@@ -1913,7 +1918,7 @@ Public Class ModernTabControl
         MyBase.OnMouseUp(e)
         If _滚动条IsDragging Then
             _滚动条IsDragging = False
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1927,7 +1932,7 @@ Public Class ModernTabControl
         Dim scrollAmount As Integer = Math.Max(1, SystemInformation.MouseWheelScrollLines * 30)
         _滚动偏移 -= Math.Sign(e.Delta) * scrollAmount
         限制滚动范围()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Function 滚动条UpdateHover(mouseLocation As Point) As Boolean
@@ -2012,12 +2017,12 @@ Public Class ModernTabControl
 
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 
@@ -2025,12 +2030,12 @@ Public Class ModernTabControl
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
     Friend Sub InvalidateFontResources()
@@ -2039,24 +2044,24 @@ Public Class ModernTabControl
     End Sub
 
     Friend Sub RefreshFontDependentRenderingNow()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         InvalidateFontResources()
         MyBase.OnFontChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         InvalidateLayoutCache()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -2066,8 +2071,10 @@ Public Class ModernTabControl
     End Property
 
     Private _backgroundSource As Control = Nothing
-    <Browsable(False),
-     EditorBrowsable(EditorBrowsableState.Never),
+    <Browsable(True),
+     Category("LakeUI"),
+     Description("用于超容器背景映射的 GPU 控件源。仅支持 V5 GPU surface。"),
+     EditorBrowsable(EditorBrowsableState.Always),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden),
      DefaultValue(GetType(Control), Nothing)>
     Public Property BackgroundSource As Control
@@ -2078,9 +2085,14 @@ Public Class ModernTabControl
             If _backgroundSource Is value Then Return
             _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
             _内容面板.BackgroundSource = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 
     Private Sub 解除背景穿透消费者()
         Try : D3D_BackgroundPenetration.UnregisterConsumer(Me) : Catch : End Try
@@ -2135,7 +2147,7 @@ Public Class ModernTabControl
             If 标签页位置 <> value Then
                 标签页位置 = value
                 同步内容面板布局()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2152,7 +2164,7 @@ Public Class ModernTabControl
                 InvalidateLayoutCache()
                 _滚动偏移 = 0
                 限制滚动范围()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2166,7 +2178,7 @@ Public Class ModernTabControl
         Set(value As TabAlignmentEnum)
             If 标签页对齐方式 <> value Then
                 标签页对齐方式 = value
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2181,7 +2193,7 @@ Public Class ModernTabControl
             If 标签栏高度 <> value Then
                 标签栏高度 = Math.Max(16, value)
                 同步内容面板布局()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2210,7 +2222,7 @@ Public Class ModernTabControl
         End Get
         Set(value As Image)
             标签栏背景图片 = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -2240,7 +2252,7 @@ Public Class ModernTabControl
             If 标签栏内边距.Equals(value) Then Return
             标签栏内边距 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 #End Region
@@ -2256,7 +2268,7 @@ Public Class ModernTabControl
             If 标签页最小宽度 <> value Then
                 标签页最小宽度 = Math.Max(16, value)
                 InvalidateLayoutCache()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2271,7 +2283,7 @@ Public Class ModernTabControl
             If 标签页项间距 = value Then Return
             标签页项间距 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -2351,7 +2363,7 @@ Public Class ModernTabControl
             If 标签页文本内边距 = value Then Return
             标签页文本内边距 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 #End Region
@@ -2367,7 +2379,7 @@ Public Class ModernTabControl
             If 图标尺寸 = value Then Return
             图标尺寸 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -2381,7 +2393,7 @@ Public Class ModernTabControl
             If 图标与文本间距 = value Then Return
             图标与文本间距 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 #End Region
@@ -2564,7 +2576,7 @@ Public Class ModernTabControl
             If 分割线宽度值 = value Then Return
             分割线宽度值 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 #End Region
@@ -2583,7 +2595,7 @@ Public Class ModernTabControl
                 _浮层显示 = False
                 同步内容面板布局()
                 限制滚动范围()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2599,7 +2611,7 @@ Public Class ModernTabControl
             If Ribbon内容高度值 <> value Then
                 Ribbon内容高度值 = value
                 If Ribbon模式值 Then 同步内容面板布局()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2616,7 +2628,7 @@ Public Class ModernTabControl
                 ' 状态切换时清空浮层显示标记
                 _浮层显示 = False
                 If Ribbon模式值 Then 同步内容面板布局()
-                请求V3渲染()
+                请求GPU渲染()
                 RaiseEvent CollapsedChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -2633,7 +2645,7 @@ Public Class ModernTabControl
         Set(value As CollapseButtonAlignmentEnum)
             If 折叠按钮对齐值 <> value Then
                 折叠按钮对齐值 = value
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -2649,7 +2661,7 @@ Public Class ModernTabControl
             If String.Equals(折叠按钮折叠文本值, value, StringComparison.Ordinal) Then Return
             折叠按钮折叠文本值 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -2664,7 +2676,7 @@ Public Class ModernTabControl
             If String.Equals(折叠按钮展开文本值, value, StringComparison.Ordinal) Then Return
             折叠按钮展开文本值 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -2678,8 +2690,8 @@ Public Class ModernTabControl
             If Object.ReferenceEquals(折叠按钮字体值, value) Then Return
             折叠按钮字体值 = value
             InvalidateFontResources()
-            请求V3渲染()
-            请求V3渲染()
+            请求GPU渲染()
+            请求GPU渲染()
         End Set
     End Property
     Private Function ShouldSerializeCollapseButtonFont() As Boolean
@@ -2718,7 +2730,7 @@ Public Class ModernTabControl
             If Object.ReferenceEquals(折叠按钮图标值, value) Then Return
             折叠按钮图标值 = value
             InvalidateLayoutCache()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 #End Region

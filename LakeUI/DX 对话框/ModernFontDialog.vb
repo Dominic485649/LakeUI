@@ -7,7 +7,7 @@ Imports D2D = Vortice.Direct2D1
 Imports DW = Vortice.DirectWrite
 
 Public Class ModernFontDialog
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource, V5_ICoalescedPresentationSource
 
     Public Sub New()
         MyBase.New()
@@ -397,9 +397,10 @@ Public Class ModernFontDialog
 
         SetStyle(ControlStyles.UserPaint Or
                  ControlStyles.AllPaintingInWmPaint Or
-                 ControlStyles.OptimizedDoubleBuffer Or
+                 ControlStyles.Opaque Or
                  ControlStyles.ResizeRedraw Or
                  ControlStyles.Selectable, True)
+        DoubleBuffered = False
         UpdateStyles()
         KeyPreview = True
         Text = 取界面文本("WindowTitle", "FontDialog")
@@ -426,7 +427,7 @@ Public Class ModernFontDialog
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: dialog pixels are emitted by RenderGpu.
+        ' GPU-only: dialog pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
@@ -443,7 +444,7 @@ Public Class ModernFontDialog
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse _isClosing OrElse IsDisposed OrElse Disposing Then Return
 
         初始化D2D字体对话框()
@@ -451,6 +452,7 @@ Public Class ModernFontDialog
 
         Dim keepWindowBackdropTransparent As Boolean = 应保持窗口级背景透明()
         ThisIsYourWindow.TryRenderAttachedChrome(context, Me)
+        ThisIsYourWindow.TryRenderAttachedClientBackdrop(context, Me)
 
         If BackColor.A > 0 AndAlso Not keepWindowBackdropTransparent Then
             context.FillRectangle(DisplayRectangle, BackColor)
@@ -460,7 +462,7 @@ Public Class ModernFontDialog
         绘制D2D文字层_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -483,7 +485,7 @@ Public Class ModernFontDialog
             box.Renderer.LineHeight = 缩放值(24)
         Next
         _d2dLayoutDirty = True
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Private Sub 清理D2D字体对话框()
@@ -2248,20 +2250,20 @@ Public Class ModernFontDialog
 #Region "辅助方法"
 
     Private Function 取D2D缩放() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function 缩放值(value As Integer) As Integer
         Return CInt(Math.Round(value * 取D2D缩放()))
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
 #End Region

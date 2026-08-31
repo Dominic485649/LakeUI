@@ -7,27 +7,21 @@ Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' 毛玻璃 / 亚克力效果的核心渲染器。
-''' 按需抓取桌面 DC（窗口背后区域）→ 下采样 → 缓存为源帧；
-''' Paint 时用 D2D 1.1 GaussianBlur 在 GPU 上处理并贴回 GDI HDC。
-''' 通过 <see cref="SetWindowDisplayAffinity"/>（Win10 19041+）确保自身不被拍到。
+''' 接收静态图片或 Auto 桌面区域采样源，在 GPU 上执行下采样、GaussianBlur、tint 与噪点合成。
 '''
 ''' === 线程模型 ===
 ''' • UI 线程：构造、<see cref="ApplyParameters"/>、<see cref="SetSource"/>、<see cref="RequestFrame"/>、
-'''   <see cref="DrawTo(Graphics, Rectangle)"/>、<see cref="Dispose"/>。
-''' • ThreadPool 工作项：<see cref="DrainPendingFrames"/> + <see cref="ProcessFrame"/>，永不直接访问
-'''   <c>_host</c> 的 Handle / IsHandleCreated / IsDisposed（WinForms 会触发跨线程检查），仅使用构造时
-'''   缓存的 <c>_hostHandle</c>；最终回 UI 线程靠 <c>_host.BeginInvoke</c>。
+'''   <see cref="Dispose"/>。
+''' • ThreadPool 工作项：<see cref="DrainPendingFrames"/> + <see cref="ProcessFrame"/>；最终回 UI 线程靠 <c>_host.BeginInvoke</c>。
 ''' • 双缓冲交换：UI 读 <c>_currentFrame</c> 源帧，worker 写 <c>_spareFrame</c>，<c>_frameLock</c> 内交换。
 ''' • Pending 请求：UI 线程在 <c>_pendingLock</c> 内一次性写齐 4 个坐标 + commit 标志；worker
 '''   在同一锁内做原子快照，避免坐标分量撕裂；commit 走 sticky 语义（已挂的 true 不会被 false 覆盖）。
 ''' • 帧版本：每次 worker 交换 _currentFrame 时 <c>Interlocked.Increment(_frameVersion)</c>，
 '''   UI 端 D2D 上传缓存据此判断是否要重传。
 '''
-''' === 关于 D2D 替代 ===
-''' • 抓桌面 DC：无 D2D 等价物，仍然必须 <c>BitBlt</c>（DXGI Desktop Duplication 不在本项目权衡范围内）。
-''' • blur：走 <c>ID2D1Effect</c> + <c>CLSID_D2D1GaussianBlur</c>。由于兼容 DC RT 与 D2D 1.1
-'''   DeviceContext 在阶段 A 不共享资源，结果通过 GDI-compatible target 的 HDC 贴回；设备丢失时统一失效资源并等下一帧重建。
-''' • 噪点在显示路径中通过 D2D bitmap brush 叠加；不再保留 GDI 噪点绘制路线。
+''' === D2D 合成 ===
+''' • blur 走 <c>ID2D1Effect</c> + <c>CLSID_D2D1GaussianBlur</c>，输出直接绘制到 V5 device context。
+''' • 噪点通过 D2D bitmap brush 叠加，不创建 GDI 输出目标。
 ''' • <see cref="ComputeAverage"/>：直接对下采样源帧取平均，避免为了边框/阴影自动色额外回读 GPU。
 '''
 ''' === D2D 资源缓存 ===
@@ -36,6 +30,7 @@ Imports Vortice.Direct2D1
 '''
 ''' === 静态源与背景映射 ===
 ''' • 静态源图不随桌面变化而变化，RequestFrame 只应在首次启用、图片引用变化或窗口尺寸变化时触发。
+''' • Auto 模式的桌面采样仅用于生成毛玻璃输入帧，不参与控件 HDC 呈现；窗口最终仍由 D2D/GPU 路径合成。
 '''   最小化/恢复、标题栏 hover、激活状态切换不应反复重建背景帧。
 ''' • 背景映射不再直接调用 D3D_BackdropSurfaceRenderer 重组玻璃层；它采样 ThisIsYourWindow 在 Form 上已经绘制完成的
 '''   成品背景，避免子页面再次叠加 blur / tint / noise。
@@ -46,7 +41,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private Shared ReadOnly _instancesLock As New Object()
     Private Shared ReadOnly _instances As New List(Of WeakReference(Of D3D_BackdropSurfaceRenderer))()
 
-#Region "Win32"
+#Region "字段"
 
     <DllImport("user32.dll")>
     Private Shared Function GetDC(hWnd As IntPtr) As IntPtr
@@ -58,9 +53,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
 
     <DllImport("gdi32.dll")>
     Private Shared Function BitBlt(hdcDst As IntPtr, x As Integer, y As Integer,
-                                    w As Integer, h As Integer,
-                                    hdcSrc As IntPtr, x1 As Integer, y1 As Integer,
-                                    rop As Integer) As Boolean
+                                    w As Integer, h As Integer, hdcSrc As IntPtr,
+                                    x1 As Integer, y1 As Integer, rop As Integer) As Boolean
     End Function
 
     <DllImport("user32.dll")>
@@ -69,33 +63,21 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
 
     Private Const WDA_NONE As Integer = &H0
     Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
-
     Private Const SRCCOPY As Integer = &HCC0020
 
-#End Region
-
-#Region "字段"
-
     Private ReadOnly _host As Form
+    Private _hostHandle As IntPtr
     ' 在 UI 线程构造时缓存的窗口句柄。后台线程绝不能访问 _host.Handle / IsHandleCreated /
     ' IsDisposed —— 那会触发 WinForms 跨线程检查（InvalidOperationException）。
-    Private _hostHandle As IntPtr
     Private ReadOnly _workerIdle As New ManualResetEventSlim(True)
     Private ReadOnly _workerLock As New Object()
     Private _disposed As Integer = 0
     Private _workerScheduled As Integer = 0
 
-    ' 0 = Desktop 抓屏；1 = Image 静态源图
+    ' 0 = Auto 桌面采样；1 = Image 静态源图
     Private _sourceMode As Integer = 0
     Private ReadOnly _sourceLock As New Object()
     Private _sourceImage As Image
-
-    ' 抓屏期间是否临时启用 WDA_EXCLUDEFROMCAPTURE 防止抓到自身。
-    ' 当宿主长期保持 WDA_NONE（允许系统截图截到本窗口）时，
-    ' 必须在 BitBlt 桌面 DC 的瞬间临时排除自身，否则会抓到镜像反馈。
-    Private _transientExcludeOnCapture As Integer = 0
-    Private ReadOnly _transientExcludeLock As New Object()
-    Private _additionalTransientExcludeHandle As IntPtr = IntPtr.Zero
 
     ' ── 参数（运行时可被 UI 线程修改，工作线程读取）──
     Private _radius As Integer = 24
@@ -137,8 +119,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private _mappedStaticFrameVersion As Integer = -1
     Private _mappedStaticFrameHdrRevision As Integer = -1
 
-    ' ── 抓屏临时位图复用（仅 Auto 模式使用，尺寸 = 窗口逻辑尺寸）──
     Private _capturedBitmap As Bitmap
+    Private _transientExcludeOnCapture As Integer
+    Private ReadOnly _transientExcludeLock As New Object()
+    Private _additionalTransientExcludeHandle As IntPtr
 
     ' ── CPU 读取缓冲（用于平均色计算）──
     Private _blurBufferA() As Byte
@@ -169,17 +153,13 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
 
     Public Sub New(host As Form)
         _host = host
+        Try
+            If host IsNot Nothing AndAlso host.IsHandleCreated Then _hostHandle = host.Handle
+        Catch
+            _hostHandle = IntPtr.Zero
+        End Try
         _cpuOwner = New CpuBudgetOwner(Me)
         _gpuOwner = New GpuBudgetOwner(Me)
-        ' 必须在 UI 线程读取 Handle（会强制创建句柄）。
-        ' 之后后台线程通过 _hostHandle 字段访问，避免 InvalidOperationException。
-        If host IsNot Nothing Then
-            Try
-                _hostHandle = host.Handle
-            Catch
-                _hostHandle = IntPtr.Zero
-            End Try
-        End If
         RegisterInstance(Me)
     End Sub
 
@@ -308,7 +288,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         InvalidateDerivedFrameCaches()
     End Sub
 
-    ''' <summary>设置渲染来源：Desktop 抓屏 或 Image 静态源图（按 cover 撑满窗口）。</summary>
+    ''' <summary>设置渲染来源。False 表示 Auto 桌面采样，True 表示 Image 静态源图（按 cover 撑满窗口）。</summary>
     Public Sub SetSource(useImage As Boolean, image As Image)
         Dim sourceMode As Integer = If(useImage, 1, 0)
         Dim changed As Boolean = (Volatile.Read(_sourceMode) <> sourceMode)
@@ -325,10 +305,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         End If
     End Sub
 
-    ''' <summary>
-    ''' 配置 Auto 抓屏期间是否临时启用 WDA_EXCLUDEFROMCAPTURE。
-    ''' 当宿主长期 WDA_NONE 但又使用 Auto 抓屏时必须开启，否则 BitBlt 会抓到自身产生反馈纹路。
-    ''' </summary>
+    ''' <summary>配置 Auto 背景采样期间是否临时将宿主窗口排除出桌面截图。</summary>
     Public Sub SetTransientExcludeOnCapture(value As Boolean,
                                             Optional additionalWindowHandle As IntPtr = Nothing)
         SyncLock _transientExcludeLock
@@ -369,10 +346,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 DisposeMappedStaticFrameNoLock()
                 Interlocked.Increment(_frameVersion)
             End SyncLock
+            ReleaseCaptureBitmap()
         End If
         DisposeGpuResources()
         If releaseCpuCaches Then
-            ReleaseCaptureBitmap()
             Volatile.Write(_publishedAverage, -1)
             _blurBufferA = Nothing
         End If
@@ -481,14 +458,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         Return False
     End Function
 
-    Private Sub ReleaseCaptureBitmap()
-        Dim old = _capturedBitmap
-        _capturedBitmap = Nothing
-        If old IsNot Nothing Then
-            Try : old.Dispose() : Catch : End Try
-        End If
-    End Sub
-
     Private Sub InvalidateMappedStaticFrameCache()
         SyncLock _frameLock
             DisposeMappedStaticFrameNoLock()
@@ -554,14 +523,22 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         End Get
     End Property
 
-    ''' <summary>请求一帧抓屏 + 模糊。多次调用只保留最新一组 bounds；commit 标志按"或"合并不会丢。</summary>
-    ''' <param name="formBounds">屏幕坐标系下的窗体外接矩形（用于 BitBlt 抓桌面 DC 的源 rect）。</param>
+    ''' <summary>请求一帧静态源图处理。多次调用只保留最新一组 bounds；commit 标志按"或"合并不会丢。</summary>
+    ''' <param name="formBounds">源图目标矩形；仅用于确定输出尺寸，不访问窗口 DC。</param>
     ''' <param name="commitAverage">
     ''' 是否将本帧平均色发布为"已稳定"——仅在首帧 / 拖动结束帧使用。
     ''' Sticky 语义：若已有未消费的 commit=true 请求，再来的 commit=false 不会清掉它。
     ''' </param>
     Public Sub RequestFrame(formBounds As Rectangle, commitAverage As Boolean)
         If Volatile.Read(_disposed) <> 0 Then Return
+        ' RequestFrame is called on the UI thread; refresh the cached handle lazily
+        ' because dialog renderers are often constructed before their HWND exists.
+        If _hostHandle = IntPtr.Zero Then
+            Try
+                If _host IsNot Nothing AndAlso _host.IsHandleCreated Then _hostHandle = _host.Handle
+            Catch
+            End Try
+        End If
         SyncLock _pendingLock
             _pendingX = formBounds.X
             _pendingY = formBounds.Y
@@ -673,60 +650,51 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                     Return
                 End Try
             Else
-                ' 从桌面 DC 抓取（_capturedBitmap 按需扩容复用）
+                ' Auto 模式只采样桌面作为毛玻璃输入源；最终输出仍由 D2D/GPU 合成。
                 Dim captured As Bitmap = AcquireCaptureBitmap(w, h)
                 If captured Is Nothing Then Return
-                ' 若宿主长期 WDA_NONE（允许系统截图截到本窗口），必须在 BitBlt 瞬间
-                ' 临时启用 WDA_EXCLUDEFROMCAPTURE，否则桌面 DC 会包含本窗口自身。
-                ' 注意：必须使用构造时缓存的 _hostHandle，绝不能在后台线程访问 _host.Handle。
-                Dim needTransientExclude As Boolean
-                Dim additionalExcludeHandle As IntPtr
+
+                Dim excludeSelf As Boolean
+                Dim additionalHandle As IntPtr
                 SyncLock _transientExcludeLock
-                    needTransientExclude = (Volatile.Read(_transientExcludeOnCapture) <> 0)
-                    additionalExcludeHandle = _additionalTransientExcludeHandle
+                    excludeSelf = Volatile.Read(_transientExcludeOnCapture) <> 0
+                    additionalHandle = _additionalTransientExcludeHandle
                 End SyncLock
-                Dim hostHandle As IntPtr = _hostHandle
-                Dim transientApplied As Boolean = False
-                Dim additionalTransientApplied As Boolean = False
-                If needTransientExclude AndAlso hostHandle <> IntPtr.Zero Then
-                    transientApplied = SetWindowDisplayAffinity(hostHandle, WDA_EXCLUDEFROMCAPTURE)
+
+                Dim selfExcluded As Boolean = False
+                Dim additionalExcluded As Boolean = False
+                If excludeSelf AndAlso _hostHandle <> IntPtr.Zero Then
+                    selfExcluded = SetWindowDisplayAffinity(_hostHandle, WDA_EXCLUDEFROMCAPTURE)
                 End If
-                If needTransientExclude AndAlso
-                   additionalExcludeHandle <> IntPtr.Zero AndAlso
-                   additionalExcludeHandle <> hostHandle Then
-                    additionalTransientApplied = SetWindowDisplayAffinity(additionalExcludeHandle, WDA_EXCLUDEFROMCAPTURE)
+                If excludeSelf AndAlso additionalHandle <> IntPtr.Zero AndAlso additionalHandle <> _hostHandle Then
+                    additionalExcluded = SetWindowDisplayAffinity(additionalHandle, WDA_EXCLUDEFROMCAPTURE)
                 End If
                 Try
-                    Using gCap As Graphics = Graphics.FromImage(captured)
-                        Dim screenDC As IntPtr = GetDC(IntPtr.Zero)
-                        If screenDC = IntPtr.Zero Then Return
+                    Using targetGraphics As Graphics = Graphics.FromImage(captured)
+                        Dim screenDc As IntPtr = GetDC(IntPtr.Zero)
+                        If screenDc = IntPtr.Zero Then Return
                         Try
-                            Dim hdc As IntPtr = gCap.GetHdc()
+                            Dim targetDc As IntPtr = targetGraphics.GetHdc()
                             Try
-                                BitBlt(hdc, 0, 0, w, h, screenDC, bounds.X, bounds.Y, SRCCOPY)
+                                If Not BitBlt(targetDc, 0, 0, w, h, screenDc, bounds.X, bounds.Y, SRCCOPY) Then Return
                             Finally
-                                gCap.ReleaseHdc(hdc)
+                                targetGraphics.ReleaseHdc(targetDc)
                             End Try
                         Finally
-                            ReleaseDC(IntPtr.Zero, screenDC)
+                            ReleaseDC(IntPtr.Zero, screenDc)
                         End Try
                     End Using
-                    Using gs As Graphics = Graphics.FromImage(small)
-                        gs.CompositingMode = CompositingMode.SourceCopy
-                        gs.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
-                        gs.PixelOffsetMode = PixelOffsetMode.HighQuality
-                        gs.DrawImage(captured, New Rectangle(0, 0, dw, dh))
+                    Using smallGraphics As Graphics = Graphics.FromImage(small)
+                        smallGraphics.CompositingMode = CompositingMode.SourceCopy
+                        smallGraphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
+                        smallGraphics.PixelOffsetMode = PixelOffsetMode.HighQuality
+                        smallGraphics.DrawImage(captured, New Rectangle(0, 0, dw, dh))
                     End Using
                 Catch
                     Return
                 Finally
-                    ' 立即恢复原状（WDA_NONE）。若设置失败也尝试恢复，避免出现意外残留。
-                    If additionalTransientApplied Then
-                        SetWindowDisplayAffinity(additionalExcludeHandle, WDA_NONE)
-                    End If
-                    If transientApplied Then
-                        SetWindowDisplayAffinity(hostHandle, WDA_NONE)
-                    End If
+                    If additionalExcluded Then SetWindowDisplayAffinity(additionalHandle, WDA_NONE)
+                    If selfExcluded Then SetWindowDisplayAffinity(_hostHandle, WDA_NONE)
                 End Try
             End If
 
@@ -820,22 +788,32 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         Try : bmp.Dispose() : Catch : End Try
     End Sub
 
-    ''' <summary>取得（必要时分配）抓屏临时位图。</summary>
-    Private Function AcquireCaptureBitmap(w As Integer, h As Integer) As Bitmap
-        Dim bmp As Bitmap = _capturedBitmap
-        If bmp IsNot Nothing AndAlso bmp.Width = w AndAlso bmp.Height = h Then
+    Private Function AcquireCaptureBitmap(width As Integer, height As Integer) As Bitmap
+        If _capturedBitmap IsNot Nothing AndAlso
+           _capturedBitmap.Width = width AndAlso _capturedBitmap.Height = height Then
             _lastCpuUse = D3D_CpuCache.NextTick()
-            Return bmp
+            Return _capturedBitmap
         End If
-        bmp?.Dispose()
-        Try
-            _capturedBitmap = New Bitmap(w, h, PixelFormat.Format32bppRgb)
-            _lastCpuUse = D3D_CpuCache.NextTick()
-        Catch
+        If _capturedBitmap IsNot Nothing Then
+            Try : _capturedBitmap.Dispose() : Catch : End Try
             _capturedBitmap = Nothing
+        End If
+        Try
+            _capturedBitmap = New Bitmap(width, height, PixelFormat.Format32bppRgb)
+            _lastCpuUse = D3D_CpuCache.NextTick()
+            Return _capturedBitmap
+        Catch
+            Return Nothing
         End Try
-        Return _capturedBitmap
     End Function
+
+    Private Sub ReleaseCaptureBitmap()
+        Dim captured = _capturedBitmap
+        _capturedBitmap = Nothing
+        If captured IsNot Nothing Then
+            Try : captured.Dispose() : Catch : End Try
+        End If
+    End Sub
 
     ''' <summary>
     ''' 直接对当前源小图采样取平均色。
@@ -889,17 +867,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             bmp.UnlockBits(data)
         End Try
     End Function
-
-    ''' <summary>把当前缓存帧拉伸绘制到目标矩形（覆盖整个客户区，含标题栏）。</summary>
-    Public Sub DrawTo(g As Graphics, target As Rectangle)
-        DrawTo(g, target, Color.Transparent, 0)
-    End Sub
-
-    ''' <summary>把当前缓存帧、tint 与噪点一次性合成为目标矩形。</summary>
-    Public Sub DrawTo(g As Graphics, target As Rectangle, tint As Color, noiseOpacity As Byte)
-        If g Is Nothing OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
-        DrawGpuComposited(g, target, tint, noiseOpacity)
-    End Sub
 
     Public Function DrawTo(context As D3D_PaintContext,
                            target As RectangleF,
@@ -956,119 +923,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             Throw
         End Try
     End Function
-
-    Private Sub DrawGpuComposited(g As Graphics, target As Rectangle, tint As Color, noiseOpacity As Byte)
-        If Volatile.Read(_disposed) <> 0 Then Return
-        Dim sourceSize As Size = Size.Empty
-        Try
-            EnsureGpuContext()
-            If Not EnsureGpuSource(sourceSize) Then Return
-            EnsureGpuTarget(target.Size)
-            _lastGpuUse = D3D_GpuCache.NextTick()
-
-            Dim previousTarget As ID2D1Image = Nothing
-            Dim interop As ID2D1GdiInteropRenderTarget = Nothing
-            Dim sourceHdc As IntPtr = IntPtr.Zero
-            Dim destHdc As IntPtr = IntPtr.Zero
-            Dim drawing As Boolean = False
-
-            Try
-                previousTarget = _gpuContext.Target
-                _gpuContext.Target = _gpuTarget
-                _gpuContext.BeginDraw()
-                drawing = True
-                ' The display target is copied into a GDI HDC with SRCCOPY. Keep it opaque so any
-                ' effect/brush alpha stays fully resolved in RGB before the copy.
-                _gpuContext.Clear(New Vortice.Mathematics.Color4(0, 0, 0, 1))
-
-                Dim oldTransform As Matrix3x2 = _gpuContext.Transform
-                Dim sx As Single = target.Width / CSng(Math.Max(1, sourceSize.Width))
-                Dim sy As Single = target.Height / CSng(Math.Max(1, sourceSize.Height))
-                Try
-                    _gpuContext.Transform = Matrix3x2.CreateScale(sx, sy)
-
-                    Dim image As ID2D1Image = GetGpuOutputImage(_gpuContext)
-                    If image Is Nothing Then Throw New InvalidOperationException("GPU backdrop output image is not available.")
-                    Try
-                        _gpuContext.DrawImage(image,
-                                              New Nullable(Of Vector2)(),
-                                              New Nullable(Of Vortice.RawRectF)(),
-                                              Vortice.Direct2D1.InterpolationMode.Linear,
-                                              CompositeMode.SourceOver)
-                    Finally
-                        If image IsNot _gpuSource Then
-                            Try : image.Dispose() : Catch : End Try
-                        End If
-                    End Try
-                Finally
-                    _gpuContext.Transform = oldTransform
-                End Try
-
-                Dim localTarget As New Rectangle(0, 0, target.Width, target.Height)
-                If tint.A > 0 Then
-                    Using b = _gpuContext.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(tint))
-                        _gpuContext.FillRectangle(D3D_D2DInterop.ToD2DRect(localTarget), b)
-                    End Using
-                End If
-                If noiseOpacity > 0 Then
-                    DrawNoiseCore(_gpuContext, localTarget, noiseOpacity, target.Location)
-                End If
-
-                interop = _gpuContext.QueryInterface(Of ID2D1GdiInteropRenderTarget)()
-                If interop Is Nothing Then Throw New InvalidOperationException("GPU backdrop target does not expose GDI interop.")
-
-                ' GetDC 必须在 BeginDraw/EndDraw 之间调用；它会隐式 flush 当前 D2D 批次。
-                sourceHdc = interop.GetDC(DcInitializeMode.Copy)
-                If sourceHdc = IntPtr.Zero Then Throw New InvalidOperationException("GPU backdrop target HDC is not available.")
-
-                Dim bltOk As Boolean
-                Try
-                    destHdc = g.GetHdc()
-                    If destHdc = IntPtr.Zero Then Throw New InvalidOperationException("Destination Graphics HDC is not available.")
-                    bltOk = BitBlt(destHdc, target.X, target.Y, target.Width, target.Height,
-                                   sourceHdc, 0, 0, SRCCOPY)
-                Finally
-                    If destHdc <> IntPtr.Zero Then
-                        Try : g.ReleaseHdc(destHdc) : Catch : End Try
-                        destHdc = IntPtr.Zero
-                    End If
-                    If sourceHdc <> IntPtr.Zero Then
-                        Try : interop.ReleaseDC(Nothing) : Catch : End Try
-                        sourceHdc = IntPtr.Zero
-                    End If
-                End Try
-
-                _gpuContext.EndDraw()
-                drawing = False
-                If Not bltOk Then Throw New InvalidOperationException("GPU backdrop BitBlt failed.")
-            Finally
-                If destHdc <> IntPtr.Zero Then
-                    Try : g.ReleaseHdc(destHdc) : Catch : End Try
-                End If
-                If interop IsNot Nothing AndAlso sourceHdc <> IntPtr.Zero Then
-                    Try : interop.ReleaseDC(Nothing) : Catch : End Try
-                End If
-                If drawing Then
-                    Try : _gpuContext.EndDraw() : Catch : End Try
-                End If
-                If _gpuContext IsNot Nothing Then
-                    Try : _gpuContext.Target = previousTarget : Catch : End Try
-                End If
-                If previousTarget IsNot Nothing Then
-                    Try : previousTarget.Dispose() : Catch : End Try
-                End If
-                If interop IsNot Nothing Then
-                    Try : interop.Dispose() : Catch : End Try
-                End If
-            End Try
-        Catch ex As Exception
-            If D3D_DeviceGlobals.HandleDeviceLost(ex) Then
-                DisposeGpuResources()
-                Throw
-            End If
-            Throw
-        End Try
-    End Sub
 
     Private Sub EnsureGpuContext()
         If _gpuContext IsNot Nothing AndAlso _gpuGeneration = D3D_DeviceGlobals.DeviceGeneration Then Return
@@ -1407,8 +1261,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             DisposeMappedStaticFrameNoLock()
         End SyncLock
         DisposeGpuResources()
-        _capturedBitmap?.Dispose()
-        _capturedBitmap = Nothing
+        ReleaseCaptureBitmap()
         _noiseBitmap?.Dispose()
         _noiseBitmap = Nothing
         DisposeNoiseD2DResources()

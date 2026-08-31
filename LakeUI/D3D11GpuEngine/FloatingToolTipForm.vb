@@ -27,7 +27,7 @@ End Enum
 
 Public NotInheritable Class FloatingToolTipForm
     Inherits PopupForm
-    Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements IMessageFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
     Private ReadOnly _owner As Control
     Private _tipText As String = ""
@@ -135,7 +135,7 @@ Public NotInheritable Class FloatingToolTipForm
         EnsureOwnerStateHandlers()
         EnsureMessageFilter()
         If Not Visible Then Show()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Friend ReadOnly Property HasSelectedText As Boolean
@@ -181,7 +181,7 @@ Public NotInheritable Class FloatingToolTipForm
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim w As Integer = ClientSize.Width
@@ -198,7 +198,7 @@ Public NotInheritable Class FloatingToolTipForm
                          TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -212,7 +212,7 @@ Public NotInheritable Class FloatingToolTipForm
         _isMouseSelecting = True
         Capture = True
         Cursor = Cursors.IBeam
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -223,7 +223,7 @@ Public NotInheritable Class FloatingToolTipForm
         If Not _isMouseSelecting Then Return
         _selectionCaret = TextPositionFromPoint(e.Location)
         ClampSelection()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -373,7 +373,7 @@ Public NotInheritable Class FloatingToolTipForm
         _selectionAnchor = 0
         _selectionCaret = _tipText.Length
         _keyboardSelectionOwner = Me
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Private Sub ClearSelection(Optional invalidateForm As Boolean = True)
@@ -381,7 +381,7 @@ Public NotInheritable Class FloatingToolTipForm
         _selectionCaret = 0
         _isMouseSelecting = False
         If ReferenceEquals(_keyboardSelectionOwner, Me) Then _keyboardSelectionOwner = Nothing
-        If invalidateForm Then RequestV3Render()
+        If invalidateForm Then RequestGpuRender()
     End Sub
 
     Private Sub ClampSelection()
@@ -581,11 +581,6 @@ Public NotInheritable Class FloatingToolTipForm
         _backdrop.Prepare(Bounds, True)
     End Sub
 
-    Private Sub 绘制毛玻璃背景(g As Graphics)
-        If Not HasBackdropFrame() Then Return
-        _backdrop.Draw(g, New Rectangle(0, 0, ClientSize.Width, ClientSize.Height))
-    End Sub
-
     Private Function 绘制毛玻璃背景(context As D3D_PaintContext, target As RectangleF) As Boolean
         If Not HasBackdropFrame() Then Return False
         Return _backdrop.Draw(context, target)
@@ -607,14 +602,14 @@ Public NotInheritable Class FloatingToolTipForm
         Return SelectableCopyEnabled
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed OrElse Disposing Then Return
         If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Function EffectiveSelectionFocusColor() As Color

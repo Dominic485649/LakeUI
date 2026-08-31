@@ -6,7 +6,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernListBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Public Event SelectedIndexChanged As EventHandler
     Public Event ItemClick As EventHandler(Of ItemEventArgs)
@@ -211,7 +211,7 @@ Public Class ModernListBox
         End Sub
 
         Private Sub InvalidateOwner()
-            If _owner._updateCount <= 0 Then _owner.请求V3渲染()
+            If _owner._updateCount <= 0 Then _owner.请求GPU渲染()
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
@@ -281,7 +281,7 @@ Public Class ModernListBox
     Private _backgroundSource As Control = Nothing
 
     <Category("LakeUI"),
-     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源（GPU 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -290,10 +290,15 @@ Public Class ModernListBox
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 
     Private _items As ItemCollection
     Friend _checkStates As New Dictionary(Of Integer, CheckStateEnum)
@@ -301,7 +306,7 @@ Public Class ModernListBox
     Private _selectedIndices As New HashSet(Of Integer)
     Private _selectionAnchor As Integer = -1
     Private _scrollOffset As Integer = 0
-    Private ReadOnly _scrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _scrollBar As New D3D_ScrollBarRenderer()
     Private _hoverIndex As Integer = -1
     Private _itemToolTips As ToolTipEntryCollection
     Private _itemIcons As IconEntryCollection
@@ -407,7 +412,7 @@ Public Class ModernListBox
             If _selectedIndex >= 0 Then _selectedIndices.Add(_selectedIndex)
             _selectionAnchor = _selectedIndex
             启动选中动画(oldIndex, _selectedIndex, oldCount, _selectedIndices.Count)
-            请求V3渲染()
+            请求GPU渲染()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -478,7 +483,7 @@ Public Class ModernListBox
     Public Sub SetCheckState(index As Integer, state As CheckStateEnum)
         If index < 0 OrElse index >= _items.Count Then Return
         设置复选状态(index, state)
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(index))
     End Sub
 
@@ -637,7 +642,7 @@ Public Class ModernListBox
             停止悬停动画()
             停止选中动画()
             校正滚动偏移()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -697,7 +702,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             复选框大小 = Math.Max(8, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -797,7 +802,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             复选框标记线宽 = Math.Max(1, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -839,7 +844,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1024,7 +1029,7 @@ Public Class ModernListBox
                 _selectedIndices.Clear()
                 _selectedIndices.Add(first)
                 _selectedIndex = first
-                请求V3渲染()
+                请求GPU渲染()
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -1126,7 +1131,7 @@ Public Class ModernListBox
             If 动画时长 <= 0 Then
                 停止悬停动画()
                 停止选中动画()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -1148,7 +1153,7 @@ Public Class ModernListBox
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -1282,7 +1287,7 @@ Public Class ModernListBox
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If Width < 1 OrElse Height < 1 Then Return
 
         Dim w As Integer = ClientRectangle.Width
@@ -1316,7 +1321,7 @@ Public Class ModernListBox
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -1549,7 +1554,7 @@ Public Class ModernListBox
 
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1557,7 +1562,7 @@ Public Class ModernListBox
         更新悬停(-1)
         延迟关闭工具提示(True)
         _scrollBar.ResetHover()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1575,7 +1580,7 @@ Public Class ModernListBox
                     _scrollOffset = newOff
                     停止悬停动画()
                     停止选中动画()
-                    请求V3渲染()
+                    请求GPU渲染()
                     Return
                 End If
             End If
@@ -1624,7 +1629,7 @@ Public Class ModernListBox
                         RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(hitIdx))
                     End If
                     _checkDragLastIndex = hitIdx
-                    请求V3渲染()
+                    请求GPU渲染()
                 End If
             End If
             Return
@@ -1642,7 +1647,7 @@ Public Class ModernListBox
             End If
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1651,7 +1656,7 @@ Public Class ModernListBox
             关闭工具提示()
             Dim insertIdx = 计算拖动排序插入位置(e.Y)
             _dragReorderInsertIndex = insertIdx
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1670,7 +1675,7 @@ Public Class ModernListBox
                             _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
                         End If
                         _dragReorderInsertIndex = _dragReorderSourceIndex
-                        请求V3渲染()
+                        请求GPU渲染()
                         Return
                     ElseIf 允许多选 Then
                         _isDragSelecting = True
@@ -1682,12 +1687,12 @@ Public Class ModernListBox
                 关闭工具提示()
                 _dragCurrent = e.Location
                 更新拖选(e)
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
 
-        If _scrollBar.UpdateHover(e.Location) Then 请求V3渲染()
+        If _scrollBar.UpdateHover(e.Location) Then 请求GPU渲染()
 
         Dim hitRow As Integer = 命中测试(e.Y)
         更新悬停(hitRow)
@@ -1705,7 +1710,7 @@ Public Class ModernListBox
         If _isCheckDragging Then
             If Not _checkDragApplied AndAlso _checkDragSourceIndex >= 0 AndAlso _checkDragSourceIndex < _items.Count Then
                 设置复选状态(_checkDragSourceIndex, 下一个复选状态(_checkDragState))
-                请求V3渲染()
+                请求GPU渲染()
                 RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(_checkDragSourceIndex))
             End If
             _isCheckDragging = False
@@ -1723,7 +1728,7 @@ Public Class ModernListBox
             _dragReorderSourceIndices.Clear()
             _dragReorderInsertIndex = -1
             _mouseDownInContent = False
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1731,7 +1736,7 @@ Public Class ModernListBox
             _isDragSelecting = False
             _mouseDownInContent = False
             _scrollBar.EndDrag()
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1742,7 +1747,7 @@ Public Class ModernListBox
         End If
 
         _scrollBar.EndDrag()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDoubleClick(e As MouseEventArgs)
@@ -1751,7 +1756,7 @@ Public Class ModernListBox
         If hitIdx >= 0 Then
             If 显示复选框 Then
                 设置复选状态(hitIdx, 下一个复选状态(获取复选状态(hitIdx)))
-                请求V3渲染()
+                请求GPU渲染()
                 RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(hitIdx))
             End If
             RaiseEvent ItemDoubleClick(Me, New ItemEventArgs(hitIdx))
@@ -1763,7 +1768,7 @@ Public Class ModernListBox
         关闭工具提示()
         If _items.Count = 0 Then Return
         Dim visCount = 估算可见行数()
-        Dim newOff = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _items.Count, visCount, 3)
+        Dim newOff = D3D_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _items.Count, visCount, 3)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
             停止悬停动画()
@@ -1771,7 +1776,7 @@ Public Class ModernListBox
             _hoverIndex = -1
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1900,7 +1905,7 @@ Public Class ModernListBox
         _selectedIndex = If(_selectedIndices.Count > 0, _selectedIndices.Min(), -1)
         Dim newIndex As Integer = If(_selectedIndices.Count = 1, _selectedIndex, -1)
         启动选中动画(oldIndex, newIndex, oldCount, _selectedIndices.Count)
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -1977,20 +1982,20 @@ Public Class ModernListBox
 
         If 动画时长 <= 0 OrElse Not IsHandleCreated Then
             停止悬停动画()
-            请求V3渲染(合并脏区(oldDirty, If(newIndex >= 0, 获取项矩形(newIndex), Rectangle.Empty)))
+            请求GPU渲染(合并脏区(oldDirty, If(newIndex >= 0, 获取项矩形(newIndex), Rectangle.Empty)))
             Return
         End If
 
         If newIndex < 0 Then
             停止悬停动画()
-            请求V3渲染(oldDirty)
+            请求GPU渲染(oldDirty)
             Return
         End If
 
         Dim newY = 获取项Y坐标(newIndex)
         If newY < 0 Then
             停止悬停动画()
-            请求V3渲染(oldDirty)
+            请求GPU渲染(oldDirty)
             Return
         End If
 
@@ -2002,7 +2007,7 @@ Public Class ModernListBox
             _hoverAnimFromH = itemH
             _hoverAnimToY = newY
             _hoverAnimToH = itemH
-            请求V3渲染(获取项矩形(newIndex))
+            请求GPU渲染(获取项矩形(newIndex))
             Return
         End If
 
@@ -2022,14 +2027,14 @@ Public Class ModernListBox
 
         If Math.Abs(_hoverAnimFromY - _hoverAnimToY) < 0.5F AndAlso Math.Abs(_hoverAnimFromH - _hoverAnimToH) < 0.5F Then
             停止悬停动画()
-            请求V3渲染(合并脏区(oldDirty, 获取项矩形(newIndex)))
+            请求GPU渲染(合并脏区(oldDirty, 获取项矩形(newIndex)))
             Return
         End If
 
         _hoverAnimActive = True
         _hoverAnimStopwatch.Restart()
         启动动画驱动()
-        请求V3渲染(合并脏区(oldDirty, 获取悬停动画脏区()))
+        请求GPU渲染(合并脏区(oldDirty, 获取悬停动画脏区()))
     End Sub
 
     Private Sub 启动选中动画(oldIndex As Integer, newIndex As Integer, oldCount As Integer, newCount As Integer)
@@ -2085,7 +2090,7 @@ Public Class ModernListBox
         If Not _hoverAnimActive AndAlso Not _selectionAnimActive Then 停止动画驱动()
         If updated Then
             Dim dirty As Rectangle = 合并脏区(dirtyBefore, 获取全部动画脏区())
-            请求V3渲染(If(dirty.IsEmpty, New Rectangle(Point.Empty, Me.Size), dirty))
+            请求GPU渲染(If(dirty.IsEmpty, New Rectangle(Point.Empty, Me.Size), dirty))
         End If
     End Sub
 
@@ -2236,7 +2241,7 @@ Public Class ModernListBox
             Case Keys.Space
                 If 显示复选框 AndAlso _selectedIndex >= 0 AndAlso _selectedIndex < _items.Count Then
                     设置复选状态(_selectedIndex, 下一个复选状态(获取复选状态(_selectedIndex)))
-                    请求V3渲染()
+                    请求GPU渲染()
                     RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(_selectedIndex))
                     e.Handled = True
                 End If
@@ -2399,13 +2404,13 @@ Public Class ModernListBox
             _scrollOffset = index
             停止悬停动画()
             停止选中动画()
-            请求V3渲染()
+            请求GPU渲染()
         ElseIf index >= _scrollOffset + visCount Then
             _scrollOffset = index - visCount + 1
             校正滚动偏移()
             停止悬停动画()
             停止选中动画()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -2425,7 +2430,7 @@ Public Class ModernListBox
                 _checkStates(i) = state
             Next
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Public Function FindString(s As String) As Integer
@@ -2472,12 +2477,12 @@ Public Class ModernListBox
 
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
@@ -2485,7 +2490,7 @@ Public Class ModernListBox
         停止悬停动画()
         停止选中动画()
         校正滚动偏移()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -2494,7 +2499,7 @@ Public Class ModernListBox
         停止悬停动画()
         停止选中动画()
         校正滚动偏移()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
@@ -2502,7 +2507,7 @@ Public Class ModernListBox
         If Not Enabled Then
             关闭工具提示()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
@@ -2510,7 +2515,7 @@ Public Class ModernListBox
         停止悬停动画()
         停止选中动画()
         校正滚动偏移()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
@@ -2518,7 +2523,7 @@ Public Class ModernListBox
         停止悬停动画()
         停止选中动画()
         校正滚动偏移()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
 #End Region
@@ -2526,16 +2531,16 @@ Public Class ModernListBox
 #Region "辅助"
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub BeginInternalUpdate()
@@ -2551,13 +2556,13 @@ Public Class ModernListBox
             _pendingSelectionChanged = False
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End If
-        If invalidateAfter Then 请求V3渲染()
+        If invalidateAfter Then 请求GPU渲染()
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            If _updateCount <= 0 Then 请求V3渲染()
+            If _updateCount <= 0 Then 请求GPU渲染()
         End If
     End Sub
 
@@ -2566,7 +2571,7 @@ Public Class ModernListBox
             _pendingSelectionChanged = True
             Return
         End If
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 

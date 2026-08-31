@@ -7,7 +7,7 @@ Imports DW = Vortice.DirectWrite
 
 <DefaultEvent("ChartChanged")>
 Public Class Ultra2DChart
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Public Event ChartChanged As EventHandler
 
@@ -804,12 +804,12 @@ Public Class Ultra2DChart
         _pendingChartChanged = False
         _pendingInvalidate = False
         If raiseChanged Then RaiseEvent ChartChanged(Me, EventArgs.Empty)
-        If invalidateNow AndAlso AutoRefresh Then 请求V3渲染()
+        If invalidateNow AndAlso AutoRefresh Then 请求GPU渲染()
     End Sub
 
     Public Sub RefreshChart(Optional rebuildLayout As Boolean = True)
         If rebuildLayout Then _layoutCache = Nothing
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Public Sub ResetPalette()
@@ -849,7 +849,7 @@ Public Class Ultra2DChart
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
         If _backgroundSource IsNot Nothing Then
@@ -867,7 +867,7 @@ Public Class Ultra2DChart
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -1138,7 +1138,7 @@ Public Class Ultra2DChart
 
 #Region "布局"
     Private Function 获取布局() As ChartLayoutInfo
-        Dim currentDpi As Integer = V3_DpiContext.FromControl(Me).Dpi
+        Dim currentDpi As Integer = D3D_DpiContext.FromControl(Me).Dpi
         Dim cached = _layoutCache
         If cached IsNot Nothing AndAlso
            cached.Width = Me.Width AndAlso
@@ -1848,16 +1848,16 @@ Public Class Ultra2DChart
     End Function
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Function 测量文本尺寸(text As String, font As Font) As Size
@@ -1947,7 +1947,7 @@ Public Class Ultra2DChart
             Return
         End If
         RaiseEvent ChartChanged(Me, EventArgs.Empty)
-        If AutoRefresh Then 请求V3渲染()
+        If AutoRefresh Then 请求GPU渲染()
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -1967,13 +1967,13 @@ Public Class Ultra2DChart
         Set(value As Boolean)
             If _autoRefresh = value Then Return
             _autoRefresh = value
-            If value Then 请求V3渲染()
+            If value Then 请求GPU渲染()
         End Set
     End Property
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return CType(超采样倍率, GlobalOptions.SuperSamplingScaleEnum)
         End Get
@@ -1996,6 +1996,11 @@ Public Class Ultra2DChart
             NotifyStyleChanged()
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 
     Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
     <Category("LakeUI"), Description("禁用时覆盖在图表上的遮罩颜色。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
@@ -3072,13 +3077,13 @@ Public Class Ultra2DChart
         If _hasHoverPoint AndAlso _hoverClientPoint = location Then Return
         _hasHoverPoint = True
         _hoverClientPoint = location
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub 清除折线悬停点()
         If Not _hasHoverPoint Then Return
         _hasHoverPoint = False
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -3103,7 +3108,7 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
@@ -3113,7 +3118,7 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 

@@ -4,7 +4,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernComboBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Public Event SelectedIndexChanged As EventHandler
     Public Shadows Event TextChanged As EventHandler
@@ -21,7 +21,7 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub InvalidateOwner()
-            If _owner._updateCount <= 0 Then _owner.请求V3渲染()
+            If _owner._updateCount <= 0 Then _owner.请求GPU渲染()
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
@@ -209,7 +209,7 @@ Public Class ModernComboBox
     Private _mouseOverArrow As Boolean = False
     Private _itemToolTips As ToolTipEntryCollection
 
-    ' V3：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
+    ' GPU：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
 
 #Region "单行文本内核适配"
@@ -242,7 +242,7 @@ Public Class ModernComboBox
                 _textRenderer.SetText(v, 0, True, False)
             End If
             _selectedIndex = matchIndex
-            请求V3渲染()
+            请求GPU渲染()
             If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
             If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
         End Set
@@ -349,7 +349,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             行高 = Math.Max(10, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -361,7 +361,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             光标线宽 = Math.Max(1, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -451,7 +451,7 @@ Public Class ModernComboBox
             If 启用编辑 = value Then Return
             启用编辑 = value
             _textRenderer.Editable = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -495,7 +495,7 @@ Public Class ModernComboBox
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -523,7 +523,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             箭头大小 = Math.Max(4, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1149,10 +1149,15 @@ Public Class ModernComboBox
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 #End Region
 
 #Region "初始化"
@@ -1196,7 +1201,7 @@ Public Class ModernComboBox
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing Then Return
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
@@ -1236,17 +1241,17 @@ Public Class ModernComboBox
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Friend Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Friend Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Friend Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Friend Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
@@ -1593,14 +1598,14 @@ Public Class ModernComboBox
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         鼠标状态 = MouseStateEnum.Normal
         _mouseOverArrow = False
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1617,14 +1622,14 @@ Public Class ModernComboBox
                 Else
                     OpenDropDown()
                 End If
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
             _mouseDownSelecting = True
             SyncTextRenderer()
             _textRenderer.BeginMouseSelection(e.X)
             ResetCaretBlink()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1643,7 +1648,7 @@ Public Class ModernComboBox
             SyncTextRenderer()
             _textRenderer.UpdateMouseSelection(e.X)
         ElseIf _mouseOverArrow <> prevOverArrow Then
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1651,7 +1656,7 @@ Public Class ModernComboBox
         MyBase.OnMouseUp(e)
         _mouseDownSelecting = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Function HitTestCol(x As Integer) As Integer
@@ -1805,14 +1810,14 @@ Public Class ModernComboBox
         Else
             _droppedDown = False
         End If
-        请求V3渲染()
+        请求GPU渲染()
         RaisePendingSelectedIndexChanged()
     End Sub
 
     Friend Sub OnDropDownClosed()
         _droppedDown = False
         _dropDownForm = Nothing
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent DropDownClosed(Me, EventArgs.Empty)
         RaisePendingSelectedIndexChanged()
     End Sub
@@ -1826,11 +1831,11 @@ Public Class ModernComboBox
 
     Private Class DropDownListForm
         Inherits PopupForm
-        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+        Implements IMessageFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, V5_IGpuPresentationSource
 
         Private _owner As ModernComboBox
 
-        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
             Get
                 Return If(_owner Is Nothing, GlobalOptions.SuperSamplingScaleEnum.OFF, _owner.SuperSamplingScale)
             End Get
@@ -1839,11 +1844,13 @@ Public Class ModernComboBox
         Private _pressedIndex As Integer = -1
         Private _scrollOffset As Integer = 0
         Private _scrollBarVisible As Boolean = False
-        Private _scrollBar As New V3_ScrollBarRenderer()
+        Private _scrollBar As New D3D_ScrollBarRenderer()
 
         Private _finalHeight As Integer
         Private _originPt As Point
         Private _suppressBoundsRender As Boolean = False
+        Private _animationClipRegion As Region
+        Private _animationClipRect As Rectangle = Rectangle.Empty
 
         ' Overlay 模式
         Private _overlayMode As Boolean = False
@@ -1945,9 +1952,10 @@ Public Class ModernComboBox
                 _alignItemDropdownY = bw + pad.Top + visIdx * itemH
 
                 Dim comboScreenPt As Point = owner.PointToScreen(New Point(0, 0))
-                Dim centerOffset As Integer = (owner.Height - itemH) \ 2
+                ' Overlay 的锚点使用控件底边，避免动画从控件中线开始或结束。
+                Dim centerOffset As Integer = Math.Max(0, owner.Height - itemH)
                 _alignItemScreenY = comboScreenPt.Y + centerOffset
-                _closeCenterScreenY = comboScreenPt.Y + owner.Height \ 2
+                _closeCenterScreenY = comboScreenPt.Y + owner.Height
                 _originPt = New Point(comboScreenPt.X, _alignItemScreenY - _alignItemDropdownY)
 
                 If _originPt.Y < scr.WorkingArea.Top Then
@@ -1975,7 +1983,7 @@ Public Class ModernComboBox
         End Sub
 
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' V3-only: pixels are emitted by RenderGpu.
+            ' GPU-only: pixels are emitted by RenderGpu.
         End Sub
 
         Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
@@ -2040,7 +2048,7 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub 绘制毛玻璃背景(g As Graphics)
-            ' V3-only: pixels are emitted by RenderGpu.
+            ' GPU-only: pixels are emitted by RenderGpu.
         End Sub
 
         Protected Overrides Sub WndProc(ByRef m As Message)
@@ -2055,10 +2063,13 @@ Public Class ModernComboBox
             准备毛玻璃背景()
             Application.AddMessageFilter(Me)
             If _owner.下拉展开关闭动画时长 > 0 Then
+                SetBoundsAndRender(_originPt, New Size(Me.Width, _finalHeight), True, True)
                 If _overlayMode Then
-                    Me.Location = New Point(_originPt.X, _alignItemScreenY)
+                    Dim startTop = Math.Max(0, Math.Min(_finalHeight - 1, _alignItemScreenY - _originPt.Y))
+                    SetAnimationClip(New Rectangle(0, startTop, Me.Width, 1))
+                Else
+                    SetAnimationClip(New Rectangle(0, 0, Me.Width, 1))
                 End If
-                Me.Size = New Size(Me.Width, 1)
                 Me.Show()
                 请求重绘(True)
                 展开关闭动画中 = True
@@ -2137,6 +2148,7 @@ Public Class ModernComboBox
             关闭工具提示()
             停止悬停动画()
             停止展开关闭驱动()
+            ClearAnimationClip()
             If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
             If 悬停计时器 IsNot Nothing Then 悬停计时器.Dispose()
             If _backdrop IsNot Nothing Then
@@ -2155,6 +2167,7 @@ Public Class ModernComboBox
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
+                    ClearAnimationClip()
                     SetBoundsAndRender(_originPt, New Size(Me.Width, _finalHeight), True, True)
                 End If
                 Return
@@ -2163,32 +2176,34 @@ Public Class ModernComboBox
             Dim elapsed As Double = 展开关闭秒表.Elapsed.TotalMilliseconds
             Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
             Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
-            Dim targetLocation As Point = Me.Location
-            Dim targetSize As Size = Me.Size
+            Dim targetLocation As Point = _originPt
+            Dim clipRect As Rectangle
 
             If _overlayMode Then
                 If 正在关闭动画 Then
                     Dim curTopY As Integer = CInt(_originPt.Y + (_closeCenterScreenY - _originPt.Y) * eased)
                     Dim curH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
-                    targetLocation = New Point(_originPt.X, curTopY)
-                    targetSize = New Size(Me.Width, curH)
+                    Dim localTop = Math.Max(0, Math.Min(_finalHeight - curH, curTopY - _originPt.Y))
+                    clipRect = New Rectangle(0, localTop, Me.Width, curH)
                 Else
                     Dim topDist As Integer = _alignItemScreenY - _originPt.Y
                     Dim bottomDist As Integer = _finalHeight - topDist
                     Dim curTop As Integer = CInt(topDist * eased)
                     Dim curBottom As Integer = CInt(bottomDist * eased)
                     Dim curH As Integer = Math.Max(1, curTop + curBottom)
-                    targetLocation = New Point(_originPt.X, _alignItemScreenY - curTop)
-                    targetSize = New Size(Me.Width, curH)
+                    Dim localTop = Math.Max(0, Math.Min(_finalHeight - curH, topDist - curTop))
+                    clipRect = New Rectangle(0, localTop, Me.Width, curH)
                 End If
             Else
                 If 正在关闭动画 Then
-                    targetSize = New Size(Me.Width, Math.Max(1, CInt(_finalHeight * (1.0F - eased))))
+                    clipRect = New Rectangle(0, 0, Me.Width, Math.Max(1, CInt(_finalHeight * (1.0F - eased))))
                 Else
-                    targetSize = New Size(Me.Width, Math.Max(1, CInt(_finalHeight * eased)))
+                    clipRect = New Rectangle(0, 0, Me.Width, Math.Max(1, CInt(_finalHeight * eased)))
                 End If
             End If
-            SetBoundsAndRender(targetLocation, targetSize)
+            SetBoundsAndRender(targetLocation, New Size(Me.Width, _finalHeight))
+            SetAnimationClip(clipRect)
+            请求重绘()
 
             If t >= 1.0F Then
                 停止展开关闭驱动()
@@ -2197,11 +2212,37 @@ Public Class ModernComboBox
                     完成关闭()
                 Else
                     Dim finalSize As New Size(Me.Width, _finalHeight)
-                    If Me.Location <> _originPt OrElse Me.Size <> finalSize Then
-                        SetBoundsAndRender(_originPt, finalSize, True, True)
-                    End If
+                    ClearAnimationClip()
+                    If Me.Location <> _originPt OrElse Me.Size <> finalSize Then SetBoundsAndRender(_originPt, finalSize, True, True)
                 End If
             End If
+        End Sub
+
+        Private Sub SetAnimationClip(rect As Rectangle)
+            If IsDisposed OrElse Width <= 0 OrElse Height <= 0 Then Return
+            Dim bounds = New Rectangle(0, 0, Width, Height)
+            rect = Rectangle.Intersect(bounds, rect)
+            If rect.Width <= 0 OrElse rect.Height <= 0 Then rect = New Rectangle(0, 0, Width, 1)
+            If _animationClipRect = rect AndAlso _animationClipRegion IsNot Nothing Then Return
+
+            ' 保持 HWND / swap chain 尺寸稳定，只裁剪可见区域，避免文字在动画中重新栅格化。
+            Dim newRegion As New Region(rect)
+            Dim oldRegion = _animationClipRegion
+            _animationClipRegion = newRegion
+            _animationClipRect = rect
+            Me.Region = newRegion
+            If oldRegion IsNot Nothing Then oldRegion.Dispose()
+        End Sub
+
+        Private Sub ClearAnimationClip()
+            Dim oldRegion = _animationClipRegion
+            _animationClipRegion = Nothing
+            _animationClipRect = Rectangle.Empty
+            Try
+                If Not IsDisposed Then Me.Region = Nothing
+            Catch
+            End Try
+            If oldRegion IsNot Nothing Then oldRegion.Dispose()
         End Sub
 
         Private Sub 完成关闭()
@@ -2230,11 +2271,11 @@ Public Class ModernComboBox
             If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
         End Sub
 
-        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
             RenderDropDown_GPU(context)
         End Sub
 
-        Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
             Return New Rectangle(Point.Empty, Me.Size)
         End Function
 
@@ -2250,16 +2291,16 @@ Public Class ModernComboBox
 
         Private Sub 请求重绘(Optional immediate As Boolean = False)
             If IsDisposed OrElse Disposing Then Return
-            请求V3渲染(immediate)
+            请求GPU渲染(immediate)
         End Sub
 
-        Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-            请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+        Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+            请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
         End Sub
 
-        Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
             If IsDisposed OrElse Disposing Then Return
-            V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+            D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
         End Sub
 
         Private Sub RenderDropDown_GPU(context As D3D_PaintContext)
@@ -2539,7 +2580,7 @@ Public Class ModernComboBox
             If Not _scrollBarVisible Then Return
             Dim total As Integer = _owner._items.Count
             Dim vis As Integer = Math.Min(total, _owner.最大下拉项数)
-            _scrollOffset = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, total, vis)
+            _scrollOffset = D3D_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, total, vis)
             关闭工具提示()
             请求重绘()
         End Sub
@@ -2620,7 +2661,7 @@ Public Class ModernComboBox
     End Property
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function ScaledToolTipGap() As Integer
@@ -2635,7 +2676,7 @@ Public Class ModernComboBox
         _updateCount -= 1
         If _updateCount > 0 Then Return
         _updateCount = 0
-        If invalidateAfter Then 请求V3渲染()
+        If invalidateAfter Then 请求GPU渲染()
     End Sub
 
     Private Function CreateToolTipStyle() As FloatingToolTipStyle
@@ -2656,7 +2697,7 @@ Public Class ModernComboBox
         Dim selectedIndexChanged As Boolean = _selectedIndex <> matchIndex
         If selectedIndexChanged Then _selectedIndex = matchIndex
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
     End Sub
@@ -2674,7 +2715,7 @@ Public Class ModernComboBox
 
         _selectedIndex = value
         _textRenderer.SetText(newText, newText.Length, True, False)
-        请求V3渲染()
+        请求GPU渲染()
         If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseSelectedIndexChanged(deferSelectedIndexChanged)
     End Sub
@@ -2695,7 +2736,7 @@ Public Class ModernComboBox
     End Sub
 
     Friend Sub OnItemsTextChanged()
-        If _updateCount <= 0 Then 请求V3渲染()
+        If _updateCount <= 0 Then 请求GPU渲染()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -2710,7 +2751,7 @@ Public Class ModernComboBox
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            If _updateCount <= 0 Then 请求V3渲染()
+            If _updateCount <= 0 Then 请求GPU渲染()
         End If
     End Sub
 #End Region
@@ -2733,7 +2774,7 @@ Public Class ModernComboBox
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -2742,7 +2783,7 @@ Public Class ModernComboBox
         End If
         MyBase.OnFontChanged(e)
         EnsureCaretVisible()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -2763,12 +2804,12 @@ Public Class ModernComboBox
             _textRenderer.StopCaretBlink()
             鼠标状态 = MouseStateEnum.Normal
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 

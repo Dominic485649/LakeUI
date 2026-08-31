@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 <DefaultEvent("LinkClicked")>
 Public Class AgentRoom
     Inherits Control
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "枚举与项类型"
     Public Enum ChatItemKind
@@ -46,7 +46,7 @@ Public Class AgentRoom
         Friend HeaderToggleButtonRect As Rectangle
         Friend FooterCopyButtonRect As Rectangle
         Friend FooterToggleButtonRect As Rectangle
-        Friend ReadOnly DetailScrollBar As New V3_ScrollBarRenderer()
+        Friend ReadOnly DetailScrollBar As New D3D_ScrollBarRenderer()
         Friend DetailContentHeight As Integer
         Friend DetailScrollOffset As Integer
         Friend DetailScrollBarVisible As Boolean
@@ -409,7 +409,7 @@ Public Class AgentRoom
     End Structure
 
     Friend ReadOnly _items As New ChatItemCollection(Me)
-    Friend ReadOnly _scrollBar As New V3_ScrollBarRenderer()
+    Friend ReadOnly _scrollBar As New D3D_ScrollBarRenderer()
     Friend _滚动偏移 As Integer = 0
     Friend _contentHeight As Integer = 0
     Friend _contentHeightDirty As Boolean = True
@@ -560,7 +560,7 @@ Public Class AgentRoom
 #Region "属性"
     Friend _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF")>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return _superSamplingScale
         End Get
@@ -571,7 +571,7 @@ Public Class AgentRoom
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     Description("背景采样源（GPU 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -580,10 +580,15 @@ Public Class AgentRoom
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 
     Friend _backColor1 As Color = Color.FromArgb(30, 30, 30)
     <Category("LakeUI"), Description("主体背景颜色"), DefaultValue(GetType(Color), "30, 30, 30"), Browsable(True)>
@@ -648,7 +653,7 @@ Public Class AgentRoom
             If _itemSpacing <> value Then
                 _itemSpacing = value
                 MarkContentLayoutDirty(0)
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Set
     End Property
@@ -662,7 +667,7 @@ Public Class AgentRoom
         Set(value As Padding)
             If _bubblePadding <> value Then
                 _bubblePadding = value
-                InvalidateAllItemsLayout() : RequestV3Render()
+                InvalidateAllItemsLayout() : RequestGpuRender()
             End If
         End Set
     End Property
@@ -687,7 +692,7 @@ Public Class AgentRoom
         Set(value As BubbleWidthMode)
             If _bubbleWidthMode <> value Then
                 _bubbleWidthMode = value
-                InvalidateAllItemsLayout() : RequestV3Render()
+                InvalidateAllItemsLayout() : RequestGpuRender()
             End If
         End Set
     End Property
@@ -702,7 +707,7 @@ Public Class AgentRoom
             value = Math.Max(0.1F, Math.Min(1.0F, value))
             If _bubbleMaxWidthRatio <> value Then
                 _bubbleMaxWidthRatio = value
-                InvalidateAllItemsLayout() : RequestV3Render()
+                InvalidateAllItemsLayout() : RequestGpuRender()
             End If
         End Set
     End Property
@@ -717,7 +722,7 @@ Public Class AgentRoom
             value = Math.Max(40, value)
             If _bubbleFixedWidth <> value Then
                 _bubbleFixedWidth = value
-                InvalidateAllItemsLayout() : RequestV3Render()
+                InvalidateAllItemsLayout() : RequestGpuRender()
             End If
         End Set
     End Property
@@ -885,7 +890,7 @@ Public Class AgentRoom
         Set(value As Padding)
             If _cardPadding <> value Then
                 _cardPadding = value
-                InvalidateAllItemsLayout() : RequestV3Render()
+                InvalidateAllItemsLayout() : RequestGpuRender()
             End If
         End Set
     End Property
@@ -900,7 +905,7 @@ Public Class AgentRoom
             value = Math.Max(0.2F, Math.Min(1.0F, value))
             If _cardMaxWidthRatio <> value Then
                 _cardMaxWidthRatio = value
-                InvalidateAllItemsLayout() : RequestV3Render()
+                InvalidateAllItemsLayout() : RequestGpuRender()
             End If
         End Set
     End Property
@@ -1660,7 +1665,7 @@ Public Class AgentRoom
             If _assistantPadding = value Then Return
             _assistantPadding = value
             InvalidateAllItemsLayout()
-            RequestV3Render()
+            RequestGpuRender()
         End Set
     End Property
 
@@ -1896,7 +1901,7 @@ Public Class AgentRoom
         _itemLayoutTops.Clear()
         _layoutAreaWidth = -1
         MarkContentLayoutDirty(0)
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     ''' <summary>添加一条用户消息。</summary>
@@ -2241,15 +2246,15 @@ Public Class AgentRoom
             Dim borderSize As Integer = Dpi(_borderSize)
             Dim borderRadius As Integer = Dpi(_borderRadius)
             Dim inset As Integer = Math.Max(borderSize, If(borderRadius > 0, borderRadius \ 2, 0))
-            Dim bandWidth As Integer = Dpi(_scrollBarWidth) + V3_ScrollBarRenderer.Margin * 4 + inset
+            Dim bandWidth As Integer = Dpi(_scrollBarWidth) + D3D_ScrollBarRenderer.Margin * 4 + inset
             Dim bandLeft As Integer = Math.Max(0, Width - bandWidth)
             dirty = Rectangle.Union(dirty, New Rectangle(bandLeft, 0, Width - bandLeft, Height))
         End If
         dirty = Rectangle.Intersect(ClientRectangle, dirty)
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            RequestV3Render(dirty)
+            RequestGpuRender(dirty)
         Else
-            RequestV3Render()
+            RequestGpuRender()
         End If
     End Sub
 
@@ -2266,7 +2271,7 @@ Public Class AgentRoom
             If itemRect.Width <= 0 OrElse itemRect.Height <= 0 Then Continue For
             dirty = If(dirty.IsEmpty, itemRect, Rectangle.Union(dirty, itemRect))
         Next
-        If Not dirty.IsEmpty Then RequestV3Render(dirty)
+        If Not dirty.IsEmpty Then RequestGpuRender(dirty)
     End Sub
 
     Private Sub InvalidateMeasureCache()
@@ -2303,7 +2308,7 @@ Public Class AgentRoom
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             InvalidateAllItemsLayout()
-            RequestV3Render()
+            RequestGpuRender()
         End If
     End Sub
 
@@ -2315,7 +2320,7 @@ Public Class AgentRoom
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function Dpi(value As Integer) As Integer
@@ -2346,7 +2351,7 @@ Public Class AgentRoom
             it.NeedsRelayout = True
         Next
         MarkContentLayoutDirty(0)
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Friend Sub ReleaseMarkdownRenderer(it As ChatItem)
@@ -2437,7 +2442,7 @@ Public Class AgentRoom
 
         If createdRenderer Then ConfigureMarkdownRenderer(it.MarkdownRenderer, it)
         Dim safeWidth As Integer = Math.Max(1, contentWidth)
-        it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, V3_DpiContext.FromControl(Me).Dpi, Me)
+        it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, D3D_DpiContext.FromControl(Me).Dpi, Me)
         If it.MarkdownRendererSubmittedTextVersion <> it.TextVersion OrElse it.MarkdownRendererWidth <> safeWidth Then
             If it.MarkdownRendererWidth = safeWidth AndAlso it.MarkdownRendererSubmittedTextVersion >= 0 Then
                 If Not it.HasMarkdownRendererAppend Then
@@ -2576,7 +2581,7 @@ Public Class AgentRoom
         Dim y As Integer = inset + pad.Top
         Dim right As Integer = Width - inset - pad.Right
         If _scrollBarVisible AndAlso _scrollBarWidth > 0 Then
-            Dim scrollVisualLeft As Integer = Width - Dpi(_scrollBarWidth) - inset - V3_ScrollBarRenderer.Margin
+            Dim scrollVisualLeft As Integer = Width - Dpi(_scrollBarWidth) - inset - D3D_ScrollBarRenderer.Margin
             right = scrollVisualLeft - pad.Right
         End If
         Dim w As Integer = Math.Max(0, right - x)
@@ -2589,7 +2594,7 @@ Public Class AgentRoom
     End Function
 
     Private Sub EnsureLayout()
-        Dim currentDpi As Integer = V3_DpiContext.FromControl(Me).Dpi
+        Dim currentDpi As Integer = D3D_DpiContext.FromControl(Me).Dpi
         If currentDpi > 0 AndAlso currentDpi <> _layoutDpi Then
             _layoutDpi = currentDpi
             InvalidateAllItemsLayout()
@@ -2916,7 +2921,7 @@ Public Class AgentRoom
 
             it.DetailScrollBarVisible = _scrollBarWidth > 0 AndAlso detailViewportHeight > 0 AndAlso it.DetailContentHeight > detailViewportHeight
             If it.DetailScrollBarVisible Then
-                Dim scrollReserve = Dpi(_scrollBarWidth) + V3_ScrollBarRenderer.Margin * 2 + Dpi(4)
+                Dim scrollReserve = Dpi(_scrollBarWidth) + D3D_ScrollBarRenderer.Margin * 2 + Dpi(4)
                 contentWidth = Math.Max(10, blockWidth - detailPadding.Horizontal - scrollReserve)
                 ChatTextHelper.WrapLines(it.Text, font, lineHeight, contentWidth, it.LineRanges, AddressOf MeasureTextWidthCached)
                 it.DetailContentHeight = Math.Max(lineHeight, it.LineRanges.Count * lineHeight) + detailPadding.Vertical
@@ -3034,7 +3039,7 @@ Public Class AgentRoom
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         Dim renderStarted = Diagnostics.Stopwatch.GetTimestamp()
         Dim layoutStarted = Diagnostics.Stopwatch.GetTimestamp()
         EnsureLayout()
@@ -3103,20 +3108,20 @@ Public Class AgentRoom
         Return Diagnostics.Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds
     End Function
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub RequestV3Render(Optional immediate As Boolean = False)
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub RequestGpuRender(Optional immediate As Boolean = False)
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
-    Private Sub InvalidateV3TextResources()
+    Private Sub InvalidateGpuTextResources()
         D3D_RenderCore.InvalidateExistingTextResources(Me)
     End Sub
 
@@ -3495,7 +3500,7 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawScrollBarRenderer_GPU(context As D3D_PaintContext,
-                                          renderer As V3_ScrollBarRenderer,
+                                          renderer As D3D_ScrollBarRenderer,
                                           scrollBarWidth As Integer,
                                           offset As Point)
         If renderer Is Nothing OrElse renderer.TrackRect.IsEmpty Then Return
@@ -4220,15 +4225,15 @@ Public Class AgentRoom
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         InvalidateAllItemsLayout()
         InvalidateMarkdownRenderers()
-        InvalidateV3TextResources()
-        RequestV3Render()
+        InvalidateGpuTextResources()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
@@ -4236,8 +4241,8 @@ Public Class AgentRoom
         InvalidateMeasureCache()
         InvalidateMarkdownRenderers()
         InvalidateAllItemsLayout()
-        InvalidateV3TextResources()
-        RequestV3Render()
+        InvalidateGpuTextResources()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Function IsInputKey(keyData As Keys) As Boolean

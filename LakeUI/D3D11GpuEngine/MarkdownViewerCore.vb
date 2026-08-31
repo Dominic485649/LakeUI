@@ -12,7 +12,8 @@ Imports Vortice.Direct2D1
 <DefaultEvent("LinkClicked")>
 Public Class MarkdownViewerCore
     Inherits UserControl
-    Implements D3D_IRenderCacheOwner, V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements D3D_IRenderCacheOwner, D3D_IGpuRenderable, D3D_IGpuInvalidationSource,
+               D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
 
@@ -721,7 +722,7 @@ Public Class MarkdownViewerCore
     ' 滚动
     Private _scrollY As Integer = 0
     Private _scrollBarVisible As Boolean = False
-    Private _scrollBar As New V3_ScrollBarRenderer()
+    Private _scrollBar As New D3D_ScrollBarRenderer()
 
     ' 流式追加
     Private _streamBuffer As New StringBuilder()
@@ -853,7 +854,7 @@ Public Class MarkdownViewerCore
                     _scrollBarVisible = False
                 End If
                 RebuildLayout()
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Set
     End Property
@@ -902,7 +903,7 @@ Public Class MarkdownViewerCore
     Friend Event EmbeddedContentApplied As EventHandler
 
     <Category("LakeUI"),
-     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源（GPU 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -911,7 +912,7 @@ Public Class MarkdownViewerCore
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Set
     End Property
@@ -1031,7 +1032,7 @@ Public Class MarkdownViewerCore
                 行内代码背景颜色 = value
                 代码块背景颜色 = value
                 RebuildLayout()
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Set
     End Property
@@ -1505,7 +1506,7 @@ Public Class MarkdownViewerCore
             代码字体 = value
             DisposeFontCache()
             RebuildLayout()
-            InvalidateV3TextResources()
+            InvalidateGpuTextResources()
             RequestEmbeddedOrSelfRefresh()
         End Set
     End Property
@@ -1559,7 +1560,7 @@ Public Class MarkdownViewerCore
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            RequestV3Render()
+            RequestGpuRender()
         End Set
     End Property
 
@@ -1636,7 +1637,7 @@ Public Class MarkdownViewerCore
         Set(value As Integer)
             段落行距 = Math.Max(0, value)
             RebuildLayout()
-            RequestV3Render()
+            RequestGpuRender()
         End Set
     End Property
 
@@ -1649,7 +1650,7 @@ Public Class MarkdownViewerCore
         Set(value As Integer)
             行内行距 = Math.Max(0, value)
             RebuildLayout()
-            RequestV3Render()
+            RequestGpuRender()
         End Set
     End Property
 
@@ -1686,6 +1687,11 @@ Public Class MarkdownViewerCore
             ParseAndLayout()
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing AndAlso Not source.IsDisposed
+    End Function
 
     Private 代码缩进宽度 As Integer = DefaultMarkdownCodeIndentSize
     <Category("LakeUI - Markdown"), Description("启用代码语法高亮时每个语法缩进层级使用的空格数；不启用高亮时保留原始缩进"), DefaultValue(4), Browsable(True)>
@@ -1858,7 +1864,7 @@ Public Class MarkdownViewerCore
                 基础路径 = value
                 DisposeImageCache()
                 RebuildLayout()
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Set
     End Property
@@ -1925,7 +1931,7 @@ Public Class MarkdownViewerCore
         MyBase.OnSizeChanged(e)
         RebuildLayout()
         ClampScroll()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
 #End Region
@@ -1988,13 +1994,13 @@ Public Class MarkdownViewerCore
     ''' <summary>滚动到顶部。</summary>
     Public Sub ScrollToTop()
         _scrollY = 0
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     ''' <summary>滚动到底部。</summary>
     Public Sub ScrollToBottom()
         _scrollY = MaxScrollY()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     ''' <summary>获取选中的纯文本。</summary>
@@ -3482,7 +3488,7 @@ Public Class MarkdownViewerCore
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
@@ -3505,28 +3511,28 @@ Public Class MarkdownViewerCore
         If Not _embeddedContentMode Then DrawScrollBar_GPU(context, w, h, s)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub RequestV3Render(Optional immediate As Boolean = False)
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub RequestGpuRender(Optional immediate As Boolean = False)
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         Dim target = GetEmbeddedInvalidationTarget()
         If target IsNot Nothing Then
-            RequestV3Render(target)
+            RequestGpuRender(target)
             Return
         End If
 
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
-    Private Sub RequestV3Render(target As Control)
+    Private Sub RequestGpuRender(target As Control)
         If target Is Nothing OrElse target.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(target, New Rectangle(Point.Empty, target.Size))
+        D3D_InvalidationRouter.RequestRender(target, New Rectangle(Point.Empty, target.Size))
     End Sub
 
     Friend Sub DrawEmbeddedContent_GPU(context As D3D_PaintContext,
@@ -3895,7 +3901,7 @@ Public Class MarkdownViewerCore
             If newOff <> _scrollY Then
                 _scrollY = newOff
                 ClampScroll()
-                RequestV3Render()
+                RequestGpuRender()
                 Return
             End If
         End If
@@ -3906,7 +3912,7 @@ Public Class MarkdownViewerCore
         _selCurrent = pos
         _hasSelection = False
         _mouseDownLinkUrl = HitTestLink(e.X, e.Y)
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -3914,12 +3920,12 @@ Public Class MarkdownViewerCore
         If _scrollBar.IsDragging Then
             _scrollY = _scrollBar.DragMove(e.Y, _totalContentHeight, ViewportHeight())
             ClampScroll()
-            RequestV3Render()
+            RequestGpuRender()
             Return
         End If
 
         If _scrollBarVisible AndAlso _scrollBar.TrackRect.Contains(e.Location) Then
-            If _scrollBar.UpdateHover(e.Location) Then RequestV3Render()
+            If _scrollBar.UpdateHover(e.Location) Then RequestGpuRender()
             Cursor = Cursors.Default
         Else
             Cursor = If(HitTestLink(e.X, e.Y) IsNot Nothing, Cursors.Hand, Cursors.IBeam)
@@ -3935,7 +3941,7 @@ Public Class MarkdownViewerCore
             Else
                 _autoScrollTimer.Stop()
             End If
-            RequestV3Render()
+            RequestGpuRender()
         End If
     End Sub
 
@@ -3979,7 +3985,7 @@ Public Class MarkdownViewerCore
         ScrollBy(scrollDelta)
         _selCurrent = HitTestPos(_lastMousePos.X, _lastMousePos.Y)
         _hasSelection = CompareSelectionPos(_selAnchor, _selCurrent) <> 0
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
 #End Region
@@ -4024,7 +4030,7 @@ Public Class MarkdownViewerCore
         _selCurrent = New SelectionPos(_visualLines.Count - 1, lastFi,
             If(lastVl.Fragments.Count > 0, lastVl.Fragments(lastFi).CharLength, 0))
         _hasSelection = True
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Private Sub ClearSelection()
@@ -4132,7 +4138,7 @@ Public Class MarkdownViewerCore
     Private Sub ScrollBy(delta As Integer)
         _scrollY += delta
         ClampScroll()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Private Function ViewportHeight() As Integer
@@ -4173,7 +4179,7 @@ Public Class MarkdownViewerCore
             Dim radiusInset As Integer = If(边框圆角半径 > 0, CInt(Math.Round(边框圆角半径 * s)) \ 2, 0)
             Dim inset As Integer = Math.Max(bi, radiusInset)
             Dim scrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
-            rightEdge = ClientRectangle.Width - inset - V3_ScrollBarRenderer.Margin - scrollW - ci.Right
+            rightEdge = ClientRectangle.Width - inset - D3D_ScrollBarRenderer.Margin - scrollW - ci.Right
         End If
         Return Math.Max(0, rightEdge)
     End Function
@@ -4304,7 +4310,7 @@ Public Class MarkdownViewerCore
         MyBase.OnFontChanged(e)
         InvalidateFontCache()
         RebuildLayout()
-        InvalidateV3TextResources()
+        InvalidateGpuTextResources()
         RequestEmbeddedOrSelfRefresh()
     End Sub
 
@@ -4313,7 +4319,7 @@ Public Class MarkdownViewerCore
         InvalidateFontCache()
         RebuildLayout()
         ClampScroll()
-        InvalidateV3TextResources()
+        InvalidateGpuTextResources()
         RequestEmbeddedOrSelfRefresh()
     End Sub
 
@@ -4435,7 +4441,7 @@ Public Class MarkdownViewerCore
                                     StoreImageCacheEntry(url, img)
                                     _imageLoadingUrls.Remove(url)
                                     RebuildLayout()
-                                    RequestV3Render()
+                                    RequestGpuRender()
                                 Else
                                     img?.Dispose()
                                 End If
@@ -4453,7 +4459,7 @@ Public Class MarkdownViewerCore
                                            _imageLoadingUrls.Remove(url)
                                            RebuildLayout()
                                            If _embeddedInvalidationTarget IsNot Nothing AndAlso Not _embeddedInvalidationTarget.IsDisposed Then
-                                               RequestV3Render(_embeddedInvalidationTarget)
+                                               RequestGpuRender(_embeddedInvalidationTarget)
                                            End If
                                        Else
                                            img?.Dispose()
@@ -4599,7 +4605,7 @@ Public Class MarkdownViewerCore
     Public Sub ClearImageCache()
         DisposeImageCache()
         RebuildLayout()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
 #End Region
@@ -4891,20 +4897,20 @@ Public Class MarkdownViewerCore
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             RebuildLayout()
-            RequestV3Render()
+            RequestGpuRender()
         End If
     End Sub
 
     Private Sub RequestEmbeddedOrSelfRefresh()
         Dim target = GetEmbeddedInvalidationTarget()
         If target IsNot Nothing Then
-            RequestV3Render(target)
+            RequestGpuRender(target)
         Else
-            RequestV3Render()
+            RequestGpuRender()
         End If
     End Sub
 
-    Private Sub InvalidateV3TextResources()
+    Private Sub InvalidateGpuTextResources()
         Dim target = If(GetEmbeddedInvalidationTarget(), DirectCast(Me, Control))
         D3D_RenderCore.InvalidateExistingTextResources(target)
     End Sub
@@ -4915,7 +4921,7 @@ Public Class MarkdownViewerCore
 
     Private Function EffectiveDeviceDpi() As Integer
         If _embeddedContentMode AndAlso _embeddedHostDpi > 0 Then Return _embeddedHostDpi
-        Return V3_DpiContext.FromControl(Me).Dpi
+        Return D3D_DpiContext.FromControl(Me).Dpi
     End Function
 
     Private Function GetContentInsets() As ContentInsets

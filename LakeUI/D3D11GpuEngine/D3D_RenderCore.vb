@@ -1,14 +1,23 @@
 ''' <summary>
-''' D3D_RenderCore 是新 GPU 核心入口，替代旧 D3D_PaintBridge 的职责但不兼容旧 API。
-''' 它管理进程级 D3D_DeviceManager、为顶层 Form 创建 D3D_WindowCompositor 资源容器、路由 RequestRender，并处理冷启动级重置。
-''' 它不迁移控件、不调用 Demo，也不向后提供旧 HDC/D2D DC RenderTarget 回退。
-''' 当前唯一呈现链路是 WinForms per-control OnPaint + D3D_PaintScope 回贴 HDC。
+''' D3D_RenderCore 是 V5 GPU 核心的进程/窗口资源入口。
+''' 它管理 D3D_DeviceManager、Form 级 D3D_WindowCompositor、设备代号和冷启动级重置；
+''' V5 控件由 D3D_V5Presentation 直接提交到自身 HWND；带删除标记的 GPU HDC 路径
+''' 仅作为顶层 chrome 兼容保护和显式 GPU 调用保留。
 ''' <para>
-''' 后续迁移控件不要再直接使用 Graphics.GetHdc，不要自己创建 D3D 设备，只能通过 PaintBridge/PaintScope 获取 D3D_PaintContext。
+''' 后续迁移控件不要直接使用 Graphics.GetHdc，不要自己创建 D3D 设备，只能接收 D3D_PaintContext。
 ''' 设备资源跟随设备代号；跨设备代号缓存必须丢弃。
 ''' </para>
 ''' </summary>
 Public NotInheritable Class D3D_RenderCore
+    ''' <summary>当前生产渲染引擎主版本。</summary>
+    Public Const EngineVersion As Integer = 5
+
+    ''' <summary>
+    ''' Optional non-blocking DXGI frame-latency gate. Disabled by default until a host
+    ''' opts in after measuring queue depth; the gate never waits on the UI thread.
+    ''' </summary>
+    Friend Shared Property V5FrameLatencySchedulerEnabled As Boolean
+
     Private Shared ReadOnly _deviceManager As New D3D_DeviceManager()
     Private Shared ReadOnly _compositorsLock As New Object()
     Private Shared ReadOnly _compositors As New Dictionary(Of Form, D3D_WindowCompositor)()
@@ -28,7 +37,7 @@ Public NotInheritable Class D3D_RenderCore
     End Property
 
     ''' <summary>
-    ''' 获取或创建指定 Form 的 V3 资源容器。它不创建 swapchain，也不参与 WinForms 控件堆叠。
+    ''' 获取或创建指定 Form 的 GPU 资源容器。它不创建 swapchain，也不参与 WinForms 控件堆叠。
     ''' </summary>
     Public Shared Function GetWindowCompositor(form As Form) As D3D_WindowCompositor
         If form Is Nothing OrElse form.IsDisposed Then Return Nothing
@@ -118,6 +127,10 @@ Public NotInheritable Class D3D_RenderCore
 
     Friend Shared Sub NotifyControlInvalidated(control As Control, dirtyRect As Rectangle)
         If control Is Nothing OrElse control.IsDisposed Then Return
+
+        ' V5 surfaces propagate invalidation through the GPU surface registry.
+        ' Do not also enqueue the legacy CPU backdrop snapshot path.
+        If D3D_V5Presentation.IsV5Control(control) Then Return
 
         Try : D3D_BackgroundPenetration.Invalidate(control, dirtyRect) : Catch : End Try
     End Sub
@@ -237,7 +250,11 @@ Public NotInheritable Class D3D_RenderCore
     Private Shared Sub RequestFullFormRender(form As Form)
         Try
             If form IsNot Nothing AndAlso Not form.IsDisposed AndAlso form.IsHandleCreated Then
-                OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=True)
+                ' Do not fan a form-level GPU/cache refresh into native child
+                ' HWNDs. Each V5 control owns its own surface and requests a
+                ' frame independently; original WinForms controls remain
+                ' entirely on their normal WM_PAINT path.
+                OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=False)
             End If
         Catch
         End Try
@@ -258,14 +275,29 @@ Public NotInheritable Class D3D_RenderCore
     End Sub
 
     Public Shared Sub InvalidateBackgroundSource(source As Control)
+        If D3D_V5Presentation.IsV5Control(source) Then
+            D3D_ControlSurfaceRegistry.MarkDirty(source)
+            D3D_V5Presentation.RequestRender(source)
+            Return
+        End If
         D3D_BackgroundPenetration.Invalidate(source)
     End Sub
 
     Public Shared Sub InvalidateBackgroundSource(source As Control, dirtyRect As Rectangle)
+        If D3D_V5Presentation.IsV5Control(source) Then
+            D3D_ControlSurfaceRegistry.MarkDirty(source, dirtyRect)
+            D3D_V5Presentation.RequestRender(source, dirtyRect)
+            Return
+        End If
         D3D_BackgroundPenetration.Invalidate(source, dirtyRect)
     End Sub
 
     Friend Shared Sub InvalidateBackgroundSnapshots(control As Control)
+        If D3D_V5Presentation.IsV5Control(control) Then
+            D3D_ControlSurfaceRegistry.MarkDirty(control)
+            D3D_V5Presentation.RequestRender(control)
+            Return
+        End If
         D3D_BackgroundPenetration.Invalidate(control)
     End Sub
 
@@ -282,6 +314,9 @@ Public NotInheritable Class D3D_RenderCore
     Friend Shared Sub InvalidateDeviceForCleanup()
         Threading.Interlocked.Increment(_suppressDeviceLostRender)
         Try
+            ' Flip-model 同一 HWND 同时只能关联一个 swap-chain。必须在进程设备释放前先释放 V5 presenter，
+            ' 否则下一 generation 的 CreateSwapChainForHwnd 可能在 DWM 尚持有旧链路时返回 E_ACCESSDENIED。
+            D3D_V5Presentation.PrepareForDeviceReset()
             _deviceManager.InvalidateDevice()
         Finally
             Threading.Interlocked.Decrement(_suppressDeviceLostRender)

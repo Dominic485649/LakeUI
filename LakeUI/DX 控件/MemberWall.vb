@@ -9,7 +9,7 @@ Imports Vortice.DirectWrite
 <DefaultEvent("ItemClick")>
 <DefaultProperty("Items")>
 Partial Public Class MemberWall
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "数据模型"
 
@@ -233,7 +233,7 @@ Partial Public Class MemberWall
 #Region "字段"
 
     Private ReadOnly _items As New MemberItemCollection(Me)
-    Private ReadOnly _scrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _scrollBar As New D3D_ScrollBarRenderer()
     Private ReadOnly _layoutCache As New List(Of CardLayout)
 
     Private Structure CardLayout
@@ -276,16 +276,16 @@ Partial Public Class MemberWall
 #Region "通用"
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Function IsInDesignMode() As Boolean
@@ -298,14 +298,14 @@ Partial Public Class MemberWall
         If EqualityComparer(Of T).Default.Equals(field, value) Then Return
         field = value
         If affectsLayout Then _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Friend Sub NotifyItemContentChanged()
         _layoutDirty = True
         _hoverIndex = -1
         _pressedIndex = -1
-        If IsInDesignMode() Then 请求V3渲染()
+        If IsInDesignMode() Then 请求GPU渲染()
     End Sub
 
     ''' <summary>
@@ -327,7 +327,7 @@ Partial Public Class MemberWall
         End If
 
         ' Redraw 是显式手动刷新入口，需要绕过父级切页刷新过滤。
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     ''' <summary>
@@ -341,7 +341,7 @@ Partial Public Class MemberWall
         _layoutDirty = True
         _hoverIndex = -1
         _pressedIndex = -1
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Shared Function 搜索词元(text As String) As String()
@@ -403,7 +403,7 @@ Partial Public Class MemberWall
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源（GPU 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -412,13 +412,18 @@ Partial Public Class MemberWall
         Set(value As Control)
             If _backgroundSource Is value Then Return
             _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
+
     Private _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return _superSamplingScale
         End Get
@@ -479,7 +484,7 @@ Partial Public Class MemberWall
         Set(value As Color)
             If MyBase.ForeColor = value Then Return
             MyBase.ForeColor = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -730,7 +735,7 @@ Partial Public Class MemberWall
         Dim needScroll As Boolean = contentH > _cardsViewportRect.Height
 
         If needScroll Then
-            Dim reserve As Single = CInt(Math.Round(_scrollBarWidth * s)) + V3_ScrollBarRenderer.Margin * 2
+            Dim reserve As Single = CInt(Math.Round(_scrollBarWidth * s)) + D3D_ScrollBarRenderer.Margin * 2
             _cardsViewportRect.Width = Math.Max(0.0F, _cardsViewportRect.Width - reserve)
             tempLayout.Clear()
             contentH = BuildCardLayout(_cardsViewportRect.Width, searchTokens, tempLayout)
@@ -759,8 +764,8 @@ Partial Public Class MemberWall
         Dim radiusPx As Integer = CInt(Math.Round(_borderRadius * s))
         Dim inset As Single = Math.Max(borderPx, If(_borderRadius > 0, radiusPx / 2.0F, 0.0F))
         Dim scrollW As Integer = CInt(Math.Round(_scrollBarWidth * s))
-        Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - V3_ScrollBarRenderer.Margin)))
-        Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - V3_ScrollBarRenderer.Margin)))
+        Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - D3D_ScrollBarRenderer.Margin)))
+        Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - D3D_ScrollBarRenderer.Margin)))
         _scrollBar.ComputeLayout(Width, Height, borderPx, radiusPx, padTop, padBottom, scrollW,
                                  Math.Max(1, _contentHeight),
                                  Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))),
@@ -866,7 +871,7 @@ Partial Public Class MemberWall
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         EnsureLayout()
         DrawBackgroundAndFrame_GPU(context)
         DrawCards_GPU(context)
@@ -875,7 +880,7 @@ Partial Public Class MemberWall
         If Not Enabled AndAlso _disabledOverlayColor.A > 0 Then DrawDisabledOverlay_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -1020,7 +1025,7 @@ Partial Public Class MemberWall
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
                 UpdateScrollBarForCurrentOffset()
-                请求V3渲染()
+                请求GPU渲染()
             End If
             Return
         End If
@@ -1036,7 +1041,7 @@ Partial Public Class MemberWall
             Cursor = Cursors.Default
         End If
 
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1046,7 +1051,7 @@ Partial Public Class MemberWall
         EnsureLayout()
 
         If _showVScroll AndAlso _scrollBar.BeginDrag(e.Location, _scrollOffset) Then
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1055,20 +1060,20 @@ Partial Public Class MemberWall
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
                 UpdateScrollBarForCurrentOffset()
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
 
         _pressedIndex = HitTestCard(e.Location)
-        If _pressedIndex >= 0 Then 请求V3渲染()
+        If _pressedIndex >= 0 Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1076,7 +1081,7 @@ Partial Public Class MemberWall
         Dim pressed As Integer = _pressedIndex
         _pressedIndex = -1
         Dim hit As Integer = HitTestCard(e.Location)
-        If pressed >= 0 Then 请求V3渲染()
+        If pressed >= 0 Then 请求GPU渲染()
         If pressed >= 0 AndAlso pressed = hit AndAlso pressed < _items.Count Then
             Dim it = _items(pressed)
             RaiseEvent ItemClick(Me, New MemberItemEventArgs(it, pressed))
@@ -1090,18 +1095,18 @@ Partial Public Class MemberWall
         _hoverIndex = -1
         If _scrollBar.ResetHover() Then needInvalidate = True
         Cursor = Cursors.Default
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
         EnsureLayout()
         If Not _showVScroll Then Return
-        Dim newOff = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, Math.Max(1, _contentHeight), Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))), _scrollStep)
+        Dim newOff = D3D_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, Math.Max(1, _contentHeight), Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))), _scrollStep)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
             UpdateScrollBarForCurrentOffset()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1112,32 +1117,32 @@ Partial Public Class MemberWall
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         _pressedIndex = -1
         _hoverIndex = -1
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
 #End Region

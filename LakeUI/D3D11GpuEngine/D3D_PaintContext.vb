@@ -4,14 +4,14 @@ Imports Vortice.Direct2D1
 Imports Vortice.Mathematics
 
 ''' <summary>
-''' D3D_PaintContext 是后续 GPU 控件迁移唯一允许接收的绘制上下文，替代旧 D3D_PaintScope。
+''' D3D_PaintContext 是 GPU 控件唯一允许接收的绘制上下文。
 ''' 它提供当前 ID2D1DeviceContext、控件本地到窗口 surface 的 transform、clip、DPI scale、文字质量、背景采样入口、frame generation 和 device generation。
 ''' FrameGeneration 只描述窗口帧序号，DeviceGeneration 只描述底层 D3D/D2D 设备代号；长期 GPU 缓存必须使用 DeviceGeneration 判定是否过期。
 ''' 它不拥有长期 GPU 资源，不提交 Present，不访问 PaintEventArgs、Graphics、HDC 或 BitBlt。
 ''' <para>
 ''' 后续控件迁移接入模板：
-''' 1. 控件实现 V3_IGpuRenderable。
-''' 2. 控件状态变化时调用 V3_InvalidationRouter.RequestRender(Me, dirtyRect)。
+''' 1. 控件实现 D3D_IGpuRenderable。
+''' 2. 控件状态变化时调用 D3D_InvalidationRouter.RequestRender(Me, dirtyRect)。
 ''' 3. RenderGpu 内只使用传入的 D3D_PaintContext。
 ''' 4. 不允许在 RenderGpu 内创建长期 GPU 缓存；长期缓存必须走 D3D_WindowCompositor 的缓存服务。
 ''' 5. 不允许在 RenderGpu 内访问 PaintEventArgs、Graphics、HDC、BitBlt。
@@ -36,7 +36,8 @@ Public NotInheritable Class D3D_PaintContext
                    deviceGeneration As Integer,
                    dirtyRectangle As Rectangle,
                    beginTextureUse As Action,
-                   beginBackdropUse As Action)
+                   beginBackdropUse As Action,
+                   Optional isDirectPresentation As Boolean = False)
         Me.Compositor = compositor
         Me.DeviceContext = deviceContext
         Me.LocalToWindowTransform = localToWindowTransform
@@ -47,6 +48,7 @@ Public NotInheritable Class D3D_PaintContext
         Me.FrameGeneration = frameGeneration
         Me.DeviceGeneration = deviceGeneration
         Me.DirtyRectangle = dirtyRectangle
+        Me.IsDirectPresentation = isDirectPresentation
         _beginTextureUse = beginTextureUse
         _beginBackdropUse = beginBackdropUse
     End Sub
@@ -61,6 +63,8 @@ Public NotInheritable Class D3D_PaintContext
     Public ReadOnly Property FrameGeneration As Integer
     Public ReadOnly Property DeviceGeneration As Integer
     Public ReadOnly Property DirtyRectangle As Rectangle
+    ''' <summary>True 表示 V5 HWND 纯 GPU 呈现；此模式禁止进入任何 CPU/HDC 背景回退。</summary>
+    Public ReadOnly Property IsDirectPresentation As Boolean
 
     ''' <summary>返回指定本地矩形是否与当前脏区相交，供大型控件跳过确定不可见的绘制命令。</summary>
     Public Function IntersectsDirty(rect As RectangleF) As Boolean
@@ -228,19 +232,28 @@ Public NotInheritable Class D3D_PaintContext
     End Sub
 
     ''' <summary>
-    ''' 按显式 source 关系采样背景。主链路使用 D3D_BackgroundPenetration 的 CPU backing + D2D 上传缓存，
-    ''' 不再递归生成窗口级 GPU snapshot。
+    ''' 按显式 source 关系采样背景。只接受持久 GPU 控件表面；采样失败时
+    ''' 回退到最近的 GPU 祖先或控件底色，但绝不转入 CPU backing 或 HDC 合成。
     ''' </summary>
     ''' <param name="destination">控件本地目标矩形；局部背景采样必须显式传局部矩形，不能隐式扩成全控件。</param>
     Public Function DrawBackgroundSource(consumer As Control, source As Control, destination As RectangleF) As Boolean
         If consumer Is Nothing OrElse consumer.IsDisposed Then Return False
-        If source Is Nothing OrElse source.IsDisposed Then Return False
         If consumer.Width <= 0 OrElse consumer.Height <= 0 Then Return False
         If destination.Width <= 0 OrElse destination.Height <= 0 Then
             destination = New RectangleF(0, 0, consumer.Width, consumer.Height)
         End If
-        D3D_BackgroundPenetration.PaintBackground(consumer, Me, source, destination)
-        Return True
+        If source IsNot Nothing AndAlso Not source.IsDisposed AndAlso
+           D3D_ControlSurfaceRegistry.TryDrawBackground(consumer, source, Me, destination) Then Return True
+
+        ' A disposed, cyclic, non-V5 or currently unavailable explicit source must
+        ' not leave an opaque HWND with a cleared black surface. Fall back to the
+        ' nearest GPU ancestor using the same cross-container coordinate mapping.
+        If D3D_ControlSurfaceRegistry.TryDrawAutomaticGpuBackdrop(consumer, Me, ignoreExplicitSource:=True) Then Return True
+        If consumer.BackColor.A > 0 Then
+            FillRectangle(destination, consumer.BackColor)
+            Return True
+        End If
+        Return False
     End Function
 
     ''' <summary>

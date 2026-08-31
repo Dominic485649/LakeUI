@@ -8,7 +8,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultProperty("Items")>
 Partial Public Class EasyStatesPanel
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "数据模型"
 
@@ -167,9 +167,9 @@ Partial Public Class EasyStatesPanel
 #Region "字段"
 
     Private ReadOnly _items As New StateItemCollection(Me)
-    Private ReadOnly _scrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _scrollBar As New D3D_ScrollBarRenderer()
     Private ReadOnly _layoutCache As New List(Of CardLayout)
-    Private ReadOnly _scrollAnimationHelper As New V3_AnimationHelper(Me) With {.Duration = 220, .FPS = 60}
+    Private ReadOnly _scrollAnimationHelper As New D3D_AnimationHelper(Me) With {.Duration = 220, .FPS = 60}
 
     Private Structure CardLayout
         Public Index As Integer
@@ -215,36 +215,36 @@ Partial Public Class EasyStatesPanel
 #Region "通用"
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T, Optional affectsLayout As Boolean = False)
         If EqualityComparer(Of T).Default.Equals(field, value) Then Return
         field = value
         If affectsLayout Then _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Friend Sub NotifyItemContentChanged()
         _textHeightCache.Clear()
         _layoutDirty = True
         ClampScrollOffsets()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Public Sub Redraw()
         _layoutDirty = True
         ClampScrollOffsets()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Shared Function TextRenderGuard(dpiScale As Single) As Single
@@ -304,7 +304,7 @@ Partial Public Class EasyStatesPanel
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
+     Description("背景采样源。设置后记录关联源控件；GPU 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -313,13 +313,18 @@ Partial Public Class EasyStatesPanel
         Set(value As Control)
             If _backgroundSource Is value Then Return
             _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
+
     Private _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return _superSamplingScale
         End Get
@@ -380,7 +385,7 @@ Partial Public Class EasyStatesPanel
         Set(value As Color)
             If MyBase.ForeColor = value Then Return
             MyBase.ForeColor = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -407,7 +412,7 @@ Partial Public Class EasyStatesPanel
             _subTextSize = value
             ReleaseSubTextFont()
             _layoutDirty = True
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -695,7 +700,7 @@ Partial Public Class EasyStatesPanel
         Dim needScroll As Boolean = contentH > _cardsViewportRect.Height
 
         If needScroll Then
-            Dim reserve As Single = CInt(Math.Round(_scrollBarWidth * s)) + V3_ScrollBarRenderer.Margin * 2 + _cardSpacing * s
+            Dim reserve As Single = CInt(Math.Round(_scrollBarWidth * s)) + D3D_ScrollBarRenderer.Margin * 2 + _cardSpacing * s
             _cardsViewportRect.Width = Math.Max(0.0F, _cardsViewportRect.Width - reserve)
             tempLayout.Clear()
             contentH = BuildCardLayout(_cardsViewportRect.Width, tempLayout)
@@ -768,8 +773,8 @@ Partial Public Class EasyStatesPanel
     Private Sub ComputeScrollBarLayout(borderPx As Integer, radiusPx As Integer, inset As Single)
         Dim s As Single = DpiScale()
         Dim scrollW As Integer = CInt(Math.Round(_scrollBarWidth * s))
-        Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - V3_ScrollBarRenderer.Margin)))
-        Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - V3_ScrollBarRenderer.Margin)))
+        Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - D3D_ScrollBarRenderer.Margin)))
+        Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - D3D_ScrollBarRenderer.Margin)))
         _scrollBar.ComputeLayout(Width, Height, borderPx, radiusPx, padTop, padBottom, scrollW,
                                  Math.Max(1, _contentHeight),
                                  Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))),
@@ -812,7 +817,7 @@ Partial Public Class EasyStatesPanel
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Width <= 0 OrElse Height <= 0 Then Return
         EnsureLayout()
 
@@ -828,7 +833,7 @@ Partial Public Class EasyStatesPanel
         If Not Enabled AndAlso _disabledOverlayColor.A > 0 Then DrawDisabledOverlay_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -1024,7 +1029,7 @@ Partial Public Class EasyStatesPanel
         If stopAfterThisTick Then StopScrollAnimation()
     End Sub
 
-    Private Sub 滚动动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+    Private Sub 滚动动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
         If Not _scrollAnimationFrameNeedsInvalidate Then
             sink.SuppressInvalidate()
             Return
@@ -1050,9 +1055,9 @@ Partial Public Class EasyStatesPanel
     Private Sub RequestScrollRender()
         Dim dirty = GetScrollDirtyRect()
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            请求V3渲染(dirty)
+            请求GPU渲染(dirty)
         Else
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1089,7 +1094,7 @@ Partial Public Class EasyStatesPanel
             Return
         End If
 
-        If _showVScroll AndAlso _scrollBar.UpdateHover(e.Location) Then 请求V3渲染()
+        If _showVScroll AndAlso _scrollBar.UpdateHover(e.Location) Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1100,7 +1105,7 @@ Partial Public Class EasyStatesPanel
 
         If _showVScroll AndAlso _scrollBar.BeginDrag(e.Location, CInt(Math.Round(_scrollOffset))) Then
             StopScrollAnimation()
-            请求V3渲染()
+            请求GPU渲染()
             Return
         End If
 
@@ -1117,13 +1122,13 @@ Partial Public Class EasyStatesPanel
         MyBase.OnMouseUp(e)
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
-        If _scrollBar.ResetHover() Then 请求V3渲染()
+        If _scrollBar.ResetHover() Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1143,34 +1148,34 @@ Partial Public Class EasyStatesPanel
         MyBase.OnSizeChanged(e)
         _layoutDirty = True
         ClampScrollOffsets()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         _layoutDirty = True
         ClampScrollOffsets()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         ReleaseSubTextFont()
         _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         ReleaseSubTextFont()
         _layoutDirty = True
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then StopScrollAnimation()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
 #End Region

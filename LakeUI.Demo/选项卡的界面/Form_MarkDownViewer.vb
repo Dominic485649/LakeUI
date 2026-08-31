@@ -16,7 +16,7 @@ Public Class Form_MarkDownViewer
         Return String.Join(vbCrLf, {
             "# LakeUI MarkdownViewer",
             "",
-            "MarkdownViewer 使用 V3 GPU 路线完成文本、块级结构、链接和代码块绘制。",
+            "MarkdownViewer 使用 GPU GPU 路线完成文本、块级结构、链接和代码块绘制。",
             "",
             "## 支持内容",
             "",
@@ -30,7 +30,7 @@ Public Class Form_MarkDownViewer
             "| 项目 | 状态 |",
             "| --- | --- |",
             "| TextChanged 同步 | 正常 |",
-            "| V3 文本绘制 | 正常 |",
+            "| GPU 文本绘制 | 正常 |",
             "| 背景穿透 | 正常 |",
             "",
             "```vb",

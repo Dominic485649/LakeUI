@@ -11,6 +11,7 @@ Partial Class ModernButton
                 助记键触发计时器?.Dispose()
                 动画助手?.Dispose()
                 长按动画助手?.Dispose()
+                涟漪动画助手?.Dispose()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

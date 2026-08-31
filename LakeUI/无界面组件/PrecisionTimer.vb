@@ -487,8 +487,7 @@ Public Class PrecisionTimer
             Dim 频率 As Long = Stopwatch.Frequency
             Dim 间隔Tick As Long = CLng(频率 * (_间隔毫秒 / 1000.0))
             If 间隔Tick < 1 Then 间隔Tick = 1
-            Dim 起始Tick As Long = Stopwatch.GetTimestamp()
-            Dim 已触发次数 As Long = 0
+            Dim 目标Tick As Long = Stopwatch.GetTimestamp() + 间隔Tick
             Dim 等待句柄() As WaitHandle = {停止信号本地, 定时器等待本地}
             ' 自旋阈值：剩余时间小于约 0.5 ms 时切换到 SpinWait 精磨
             Dim 自旋阈值Tick As Long = 频率 \ 2000
@@ -499,15 +498,11 @@ Public Class PrecisionTimer
                 间隔Tick = CLng(频率 * (当前间隔毫秒 / 1000.0))
                 If 间隔Tick < 1 Then 间隔Tick = 1
 
-                已触发次数 += 1
-                Dim 目标Tick As Long = 起始Tick + 已触发次数 * 间隔Tick
-
-                ' 若已严重落后 (>= 2 个间隔)，跳到当前时间，避免赶工风暴
+                ' Deadline 始终从上一 deadline 递推。不能用“启动时间 + 次数 × 当前间隔”重算：
+                ' Interval 在运行时改变时，那种算法会把历史次数全部乘上新间隔，造成 deadline 大幅跳变。
                 Dim 现在 As Long = Stopwatch.GetTimestamp()
                 If 现在 - 目标Tick > 间隔Tick * 2 Then
-                    起始Tick = 现在
-                    已触发次数 = 1
-                    目标Tick = 起始Tick + 间隔Tick
+                    目标Tick = 现在 + 间隔Tick
                 End If
 
                 Dim 剩余Tick As Long = 目标Tick - Stopwatch.GetTimestamp()
@@ -542,12 +537,6 @@ Public Class PrecisionTimer
                 If _分发模式 = DispatchModeEnum.Blocking Then
                     派发Blocking()
                     If 停止信号本地.WaitOne(0) Then Return
-                    ' Blocking 下若处理时长 > 1 个间隔，重设基准避免堆积赶工
-                    Dim 结束Tick As Long = Stopwatch.GetTimestamp()
-                    If 结束Tick - 目标Tick > 间隔Tick Then
-                        起始Tick = 结束Tick
-                        已触发次数 = 0
-                    End If
                 Else
                     派发NonBlocking(ctx.工作队列)
                 End If
@@ -556,6 +545,17 @@ Public Class PrecisionTimer
                     ' 单次触发：异步停止 (避免在调度线程内 Join 自己)
                     ThreadPool.QueueUserWorkItem(Sub() [Stop]())
                     Return
+                End If
+
+                ' 回调可以修改 Interval；新值只作用于下一段 deadline，不追溯修改历史周期。
+                Dim 下一间隔Tick As Long = CLng(频率 * (_间隔毫秒 / 1000.0))
+                If 下一间隔Tick < 1 Then 下一间隔Tick = 1
+                Dim 完成Tick As Long = Stopwatch.GetTimestamp()
+                If 完成Tick - 目标Tick > 下一间隔Tick Then
+                    ' 单帧处理已经跨过一个完整周期时从当前时刻恢复，避免无意义赶工。
+                    目标Tick = 完成Tick + 下一间隔Tick
+                Else
+                    目标Tick += 下一间隔Tick
                 End If
             Loop
         Catch

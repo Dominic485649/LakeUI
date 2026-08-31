@@ -1,6 +1,8 @@
 using System.Drawing;
+using System.ComponentModel;
 using System.Collections;
 using System.Reflection;
+using System.Windows.Forms;
 using LakeUI;
 
 static class Program
@@ -14,6 +16,15 @@ static class Program
         VerifyMermaidCopyText();
         VerifyCustomHighlighterRegistration();
         VerifyAgentThinkingTagParsing();
+        VerifyV5MarkerCoverage();
+        VerifyBackgroundSourceControlCoverage();
+        VerifyAutomaticBackdropAncestorSearch();
+        VerifyBackgroundDependencyLifecycle();
+        VerifyTabListTransparentBackgroundFallback();
+        VerifyTabListBackgroundSourceBrowsable();
+        VerifyModernPanelOverlayRenderingContract();
+        VerifyModernButtonAnimationDefaults();
+        VerifyV5ProbeApi();
         Console.WriteLine("Markdown code and Mermaid parser tests passed.");
     }
 
@@ -34,6 +45,184 @@ static class Program
         thinking.Append(tail.ThinkingText);
         Assert(visible.ToString() == "answerend", "Thinking tags must not leak into the visible answer.");
         Assert(thinking.ToString() == "firstsecond", "Thinking text must remain available for the collapsed activity.");
+    }
+
+    private static void VerifyV5MarkerCoverage()
+    {
+        var assembly = typeof(MarkdownViewerCore).Assembly;
+        var types = assembly.GetTypes();
+        var renderable = types.FirstOrDefault(type => type.Name == "D3D_IGpuRenderable");
+        var marker = types.FirstOrDefault(type => type.Name == "V5_IGpuPresentationSource");
+        var backgroundProvider = types.FirstOrDefault(type => type.Name == "D3D_IBackgroundSourceProvider");
+        Assert(renderable is not null && marker is not null && backgroundProvider is not null, "GPU migration contracts must be present.");
+        var emptyPlaceholder = types.FirstOrDefault(type => type.Name == "JustEmptyControl");
+        Assert(emptyPlaceholder is not null && renderable!.IsAssignableFrom(emptyPlaceholder),
+            "JustEmptyControl must participate in V5 GPU rendering so transparent backgrounds can map their nearest ancestor.");
+
+        foreach (var type in types)
+        {
+            if (type.IsAbstract || !typeof(Control).IsAssignableFrom(type) || !renderable!.IsAssignableFrom(type))
+                continue;
+            Assert(marker!.IsAssignableFrom(type),
+                $"GPU-renderable control {type.FullName} must implement V5_IGpuPresentationSource.");
+        }
+
+        foreach (var type in types)
+        {
+            if (type.IsAbstract || !typeof(Control).IsAssignableFrom(type) || !backgroundProvider!.IsAssignableFrom(type))
+                continue;
+            Assert(marker!.IsAssignableFrom(type),
+                $"Background source provider {type.FullName} must expose a V5 GPU surface.");
+        }
+    }
+
+    private static void VerifyAutomaticBackdropAncestorSearch()
+    {
+        using var source = new ModernPanel();
+        using var middle = new Panel();
+        using var label = new HtmlColorLabel();
+        source.Controls.Add(middle);
+        middle.Controls.Add(label);
+
+        var registry = typeof(MarkdownViewerCore).Assembly.GetType("LakeUI.D3D_ControlSurfaceRegistry");
+        var finder = registry?.GetMethod("查找最近GPU祖先", BindingFlags.Static | BindingFlags.NonPublic);
+        var resolved = finder?.Invoke(null, new object[] { label }) as Control;
+        Assert(ReferenceEquals(resolved, source),
+            "Automatic GPU backdrop must resolve the nearest V5 ancestor through ordinary containers.");
+
+        var cycleCheck = registry?.GetMethod("形成背景循环", BindingFlags.Static | BindingFlags.NonPublic);
+        var selfCycle = (bool?)cycleCheck?.Invoke(null, new object[] { label, label });
+        Assert(selfCycle == true, "Background sampling must reject a control as its own source.");
+    }
+
+    private static void VerifyBackgroundSourceControlCoverage()
+    {
+        var assembly = typeof(MarkdownViewerCore).Assembly;
+        var backgroundProvider = assembly.GetTypes().First(type => type.Name == "D3D_IBackgroundSourceProvider");
+        foreach (var type in assembly.GetTypes())
+        {
+            if (type.IsAbstract || (!type.IsPublic && !type.IsNestedPublic) ||
+                !typeof(Control).IsAssignableFrom(type) || !backgroundProvider.IsAssignableFrom(type))
+                continue;
+
+            var property = type.GetProperty("BackgroundSource", BindingFlags.Instance | BindingFlags.Public);
+            Assert(property is not null && property.CanRead && property.CanWrite &&
+                   typeof(Control).IsAssignableFrom(property.PropertyType),
+                $"V5 background consumer {type.FullName} must expose a writable Control BackgroundSource property.");
+            var browsable = property!.GetCustomAttribute<BrowsableAttribute>();
+            Assert(browsable?.Browsable != false,
+                $"V5 background consumer {type.FullName}.BackgroundSource must remain available in the designer.");
+        }
+    }
+
+    private static void VerifyBackgroundDependencyLifecycle()
+    {
+        using var sourceHost = new Panel();
+        using var consumerHost = new Panel();
+        using var source = new ModernPanel();
+        using var consumer = new ModernButton();
+        sourceHost.Controls.Add(source);
+        consumerHost.Controls.Add(consumer);
+
+        var registry = typeof(MarkdownViewerCore).Assembly.GetType("LakeUI.D3D_ControlSurfaceRegistry")!;
+        var register = registry.GetMethod("注册依赖", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var remove = registry.GetMethod("移除控件", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var handleDestroyed = registry.GetMethod("控件句柄已销毁", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var sourcesField = registry.GetField("_consumerSources", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var coordinatesField = registry.GetField("_consumerCoordinateControls", BindingFlags.Static | BindingFlags.NonPublic)!;
+
+        register.Invoke(null, new object[] { consumer, source, new RectangleF(1, 2, 10, 12) });
+        Assert(GetRegistryCollectionCount(sourcesField, consumer) == 1,
+            "A successful V5 backdrop sample must register its source dependency.");
+        Assert(GetRegistryCollectionCount(coordinatesField, consumer) > 0,
+            "Cross-container backdrop mapping must track coordinate-space ancestors.");
+
+        D3D_BackgroundPenetration.SetBackgroundSource(consumer, source, null!);
+        Assert(GetRegistryCollectionCount(sourcesField, consumer) == 0 &&
+               GetRegistryCollectionCount(coordinatesField, consumer) == 0,
+            "Changing BackgroundSource must detach stale source and coordinate dependencies immediately.");
+
+        register.Invoke(null, new object[] { consumer, source, RectangleF.Empty });
+        handleDestroyed.Invoke(null, new object[] { source, EventArgs.Empty });
+        Assert(GetRegistryCollectionCount(sourcesField, consumer) == 1,
+            "Temporary handle destruction must preserve logical backdrop dependencies for recreation.");
+        remove.Invoke(null, new object[] { source });
+        Assert(GetRegistryCollectionCount(sourcesField, consumer) == 0 &&
+               GetRegistryCollectionCount(coordinatesField, consumer) == 0,
+            "Removing a backdrop source must detach and wake its consumers without retaining stale controls.");
+    }
+
+    private static int GetRegistryCollectionCount(FieldInfo field, Control key)
+    {
+        var dictionary = (IDictionary)field.GetValue(null)!;
+        if (!dictionary.Contains(key)) return 0;
+        var collection = dictionary[key]!;
+        return (int)collection.GetType().GetProperty("Count")!.GetValue(collection)!;
+    }
+
+    private static void VerifyV5ProbeApi()
+    {
+        D3D_PaintBridge.ResetV5Probe();
+        D3D_PaintBridge.V5ProbeEnabled = true;
+        var snapshot = D3D_PaintBridge.GetV5ProbeSnapshot();
+        Assert(snapshot.Enabled, "V5 probe must report its enabled state.");
+        Assert(snapshot.BackdropAttempts == 0 && snapshot.ChromeOverlayCreateFailures == 0,
+            "V5 probe reset must clear runtime counters.");
+        Assert(snapshot.ChromeOverlayFallbackPaints == 0 && snapshot.SubmittedFrames == 0 &&
+               snapshot.FrameIntervalP99 == 0 && snapshot.CrossFormBackdropSuccesses == 0,
+            "V5 probe reset must clear chrome fallback and frame timing state.");
+        D3D_PaintBridge.V5ProbeEnabled = false;
+    }
+
+    private static void VerifyTabListTransparentBackgroundFallback()
+    {
+        using var tabList = new ModernTabListControl
+        {
+            BackColor = Color.FromArgb(24, 24, 24),
+            TabStripBackColor = Color.Transparent
+        };
+        var method = typeof(ModernTabListControl).GetMethod(
+            "获取标签栏有效背景颜色",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var effective = (Color?)method?.Invoke(tabList, null);
+        Assert(effective == Color.FromArgb(24, 24, 24),
+            "Transparent TabStripBackColor must inherit the control background for V5 surfaces.");
+    }
+
+    private static void VerifyTabListBackgroundSourceBrowsable()
+    {
+        var property = typeof(ModernTabListControl).GetProperty("BackgroundSource");
+        var browsable = property?.GetCustomAttribute<BrowsableAttribute>();
+        Assert(property is not null && browsable?.Browsable == true,
+            "ModernTabListControl.BackgroundSource must remain visible in the designer property grid.");
+    }
+
+    private static void VerifyModernPanelOverlayRenderingContract()
+    {
+        using var panel = new ModernPanel
+        {
+            BackColor = Color.FromArgb(255, 20, 20, 20),
+            BackColor1 = Color.FromArgb(255, 30, 30, 30),
+            OverlayColor = Color.FromArgb(64, 255, 255, 255)
+        };
+        var method = typeof(ModernPanel).GetMethod(
+            "需要自绘背景",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        var requiresGpuBackground = (bool?)method?.Invoke(panel, null);
+        Assert(requiresGpuBackground == true,
+            "ModernPanel with a translucent OverlayColor must use the V5 background composition path.");
+
+    }
+
+    private static void VerifyModernButtonAnimationDefaults()
+    {
+        using var button = new ModernButton();
+        Assert(button.AnimationDuration == 1000,
+            "ModernButton.AnimationDuration must default to 1000 milliseconds.");
+        var defaultValue = typeof(ModernButton).GetProperty("AnimationDuration")?
+            .GetCustomAttribute<DefaultValueAttribute>();
+        Assert((int?)defaultValue?.Value == 1000,
+            "ModernButton.AnimationDuration designer metadata must match its runtime default.");
     }
 
     private static void VerifyFenceParsing()

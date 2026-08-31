@@ -5,13 +5,13 @@ Imports DW = Vortice.DirectWrite
 
 <DefaultEvent("ValueChanged")>
 Public Class ExcellentTrackBar
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "背景源"
     Private _backgroundSource As Control = Nothing
 
     <Category("LakeUI"),
-     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
+     Description("背景采样源。设置后记录关联源控件；GPU 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -20,10 +20,15 @@ Public Class ExcellentTrackBar
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 #End Region
 
     Public Event ValueChanged As EventHandler
@@ -84,7 +89,7 @@ Public Class ExcellentTrackBar
         End Sub
 
         Private Sub InvalidateOwner()
-            _owner?.请求V3渲染()
+            _owner?.请求GPU渲染()
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As TrackLabel)
@@ -124,7 +129,7 @@ Public Class ExcellentTrackBar
         End Sub
 
         Private Sub InvalidateOwner()
-            _owner?.请求V3渲染()
+            _owner?.请求GPU渲染()
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As String)
@@ -156,27 +161,27 @@ Public Class ExcellentTrackBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me) With {.Duration = 0}
+    Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me) With {.Duration = 0}
 
-    Private Sub 滑块动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+    Private Sub 滑块动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
         sink.InvalidateAll()
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Function 计算值比例(val As Double) As Single
@@ -207,7 +212,7 @@ Public Class ExcellentTrackBar
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -239,7 +244,7 @@ Public Class ExcellentTrackBar
             If 最大值 < 最小值 Then 最大值 = 最小值
             If 当前值 < 最小值 Then 当前值 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -255,7 +260,7 @@ Public Class ExcellentTrackBar
             If 最小值 > 最大值 Then 最小值 = 最大值
             If 当前值 > 最大值 Then 当前值 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -601,7 +606,7 @@ Public Class ExcellentTrackBar
             If 标签字号 <> value Then
                 标签字号 = value
                 释放标签字体缓存()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -803,7 +808,7 @@ Public Class ExcellentTrackBar
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
         If _backgroundSource IsNot Nothing Then
             context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
@@ -823,7 +828,7 @@ Public Class ExcellentTrackBar
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -1060,13 +1065,13 @@ Public Class ExcellentTrackBar
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If Not 正在拖动 Then 鼠标状态 = MouseStateEnum.Normal
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1092,7 +1097,7 @@ Public Class ExcellentTrackBar
             拖动偏移 = 0
             更新值从坐标(e.Location)
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -1111,7 +1116,7 @@ Public Class ExcellentTrackBar
         拖动偏移 = 0
         If Me.Capture Then Me.Capture = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseCaptureChanged(e As EventArgs)
@@ -1121,7 +1126,7 @@ Public Class ExcellentTrackBar
         正在拖动 = False
         拖动偏移 = 0
         鼠标状态 = If(ClientRectangle.Contains(PointToClient(MousePosition)), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1243,27 +1248,27 @@ Public Class ExcellentTrackBar
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         释放标签字体缓存()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnResize(e As EventArgs)
         MyBase.OnResize(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
 End Class

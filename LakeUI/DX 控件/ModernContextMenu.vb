@@ -8,7 +8,7 @@ Imports Vortice.Direct2D1
 <ProvideProperty("EnableMenu", GetType(Control))>
 Public Class ModernContextMenu
     Inherits Component
-    Implements V3_ISuperSamplingSource
+    Implements D3D_ISuperSamplingSource
     Implements IExtenderProvider
 
     Public Enum BackdropModeEnum
@@ -318,7 +318,7 @@ Public Class ModernContextMenu
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -583,11 +583,11 @@ Public Class ModernContextMenu
 
     Friend Class MenuPopupForm
         Inherits PopupForm
-        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+        Implements IMessageFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, V5_IGpuPresentationSource
 
         Private ReadOnly 菜单 As ModernContextMenu
 
-        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
             Get
                 Return If(菜单 Is Nothing, GlobalOptions.SuperSamplingScaleEnum.OFF, 菜单.SuperSamplingScale)
             End Get
@@ -619,6 +619,11 @@ Public Class ModernContextMenu
         Private 展开关闭动画中 As Boolean = False
         Private 正在关闭动画 As Boolean = False
         Private 最终高度 As Integer
+        Private 展开关闭起始高度 As Single = 1.0F
+        Private 展开关闭目标高度 As Single = 1.0F
+        Private 展开关闭当前高度 As Single = 1.0F
+        Private 动画裁剪区域 As Region
+        Private 动画裁剪高度 As Integer = -1
 
         Private _backdrop As D3D_PopupBackdropRenderer
 
@@ -685,7 +690,7 @@ Public Class ModernContextMenu
         End Function
 
         Private Function DpiScale() As Single
-            Return V3_DpiContext.FromControl(Me).Scale
+            Return D3D_DpiContext.FromControl(Me).Scale
         End Function
 
         Friend Sub ShowAt(x As Integer, y As Integer)
@@ -701,7 +706,10 @@ Public Class ModernContextMenu
             准备毛玻璃背景()
             If 父弹窗 Is Nothing Then Application.AddMessageFilter(Me)
             If 菜单.展开关闭动画时长 > 0 Then
-                Me.Size = New Size(Me.Width, 1)
+                展开关闭起始高度 = 1.0F
+                展开关闭目标高度 = 最终高度
+                展开关闭当前高度 = 展开关闭起始高度
+                设置展开关闭裁剪高度(1)
                 Me.Show()
                 展开关闭动画中 = True
                 正在关闭动画 = False
@@ -731,7 +739,10 @@ Public Class ModernContextMenu
             If Me.Top < scr.Top Then Me.Top = scr.Top
             准备毛玻璃背景()
             If 菜单.展开关闭动画时长 > 0 Then
-                Me.Size = New Size(Me.Width, 1)
+                展开关闭起始高度 = 1.0F
+                展开关闭目标高度 = 最终高度
+                展开关闭当前高度 = 展开关闭起始高度
+                设置展开关闭裁剪高度(1)
                 Me.Show()
                 展开关闭动画中 = True
                 正在关闭动画 = False
@@ -749,8 +760,8 @@ Public Class ModernContextMenu
             If 子菜单弹窗 IsNot Nothing AndAlso Not 子菜单弹窗.IsDisposed Then
                 子菜单弹窗.RefreshFontResources()
             End If
-            InvalidateV3TextResources()
-            RequestV3Render()
+            InvalidateGpuTextResources()
+            RequestGpuRender()
         End Sub
 
         Private Shared Function ToPopupBackdropMode(mode As BackdropModeEnum) As PopupBackdropMode
@@ -853,7 +864,7 @@ Public Class ModernContextMenu
             If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
         End Sub
 
-        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
             If ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
             Dim hasBackdrop = DrawBackdrop_GPU(context)
@@ -861,20 +872,20 @@ Public Class ModernContextMenu
             DrawAllText_GPU(context)
         End Sub
 
-        Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
             Return New Rectangle(Point.Empty, Me.Size)
         End Function
 
-        Private Sub RequestV3Render(Optional immediate As Boolean = False)
-            RequestV3Render(New Rectangle(Point.Empty, Me.Size), immediate)
+        Private Sub RequestGpuRender(Optional immediate As Boolean = False)
+            RequestGpuRender(New Rectangle(Point.Empty, Me.Size), immediate)
         End Sub
 
-        Private Sub RequestV3Render(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        Private Sub RequestGpuRender(dirtyRect As Rectangle, Optional immediate As Boolean = False)
             If IsDisposed OrElse Disposing Then Return
-            V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+            D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
         End Sub
 
-        Private Sub InvalidateV3TextResources()
+        Private Sub InvalidateGpuTextResources()
             D3D_RenderCore.InvalidateExistingTextResources(Me)
         End Sub
 
@@ -1056,13 +1067,6 @@ Public Class ModernContextMenu
             context.FillRoundedRectangle(rect, radius, brush)
         End Sub
 
-        Private Sub 绘制毛玻璃背景(g As Graphics)
-            If Not HasBackdropFrame() Then Return
-            Dim target As New Rectangle(0, 0, ClientSize.Width, ClientSize.Height)
-            _backdrop.Draw(g, target)
-        End Sub
-
-
 #End Region
 
 #Region "鼠标交互"
@@ -1073,7 +1077,7 @@ Public Class ModernContextMenu
             If newIndex <> 悬停索引 Then
                 悬停索引 = newIndex
                 更新悬停动画()
-                RequestV3Render()
+                RequestGpuRender()
                 处理子菜单悬停()
             End If
         End Sub
@@ -1082,14 +1086,14 @@ Public Class ModernContextMenu
             MyBase.OnMouseDown(e)
             If e.Button = MouseButtons.Left OrElse e.Button = MouseButtons.Right Then
                 鼠标按下 = True
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Sub
 
         Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
             MyBase.OnMouseUp(e)
             鼠标按下 = False
-            RequestV3Render()
+            RequestGpuRender()
         End Sub
 
         Protected Overrides Sub OnMouseClick(e As MouseEventArgs)
@@ -1105,7 +1109,7 @@ Public Class ModernContextMenu
                 关闭全部()
             Else
                 item.PerformClick()
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Sub
 
@@ -1114,7 +1118,7 @@ Public Class ModernContextMenu
             If 子菜单弹窗 Is Nothing OrElse 子菜单弹窗.IsDisposed Then
                 悬停索引 = -1
                 更新悬停动画()
-                RequestV3Render()
+                RequestGpuRender()
             End If
         End Sub
 
@@ -1227,7 +1231,7 @@ Public Class ModernContextMenu
                 动画当前Y = 动画目标Y
                 动画当前高度 = 动画目标高度
                 停止动画()
-                RequestV3Render()
+                RequestGpuRender()
                 Return
             End If
 
@@ -1243,7 +1247,7 @@ Public Class ModernContextMenu
                 动画当前高度 = 动画目标高度
                 停止动画()
             End If
-            RequestV3Render()
+            RequestGpuRender()
         End Sub
 
         Private Sub 停止动画()
@@ -1266,7 +1270,8 @@ Public Class ModernContextMenu
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
-                    Me.Size = New Size(Me.Width, 最终高度)
+                    展开关闭当前高度 = 展开关闭目标高度
+                    清除展开关闭裁剪()
                 End If
                 Return
             End If
@@ -1275,14 +1280,10 @@ Public Class ModernContextMenu
             Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
             Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
 
-            If 正在关闭动画 Then
-                Dim newH As Integer = Math.Max(1, CInt(最终高度 * (1.0F - eased)))
-                Me.Size = New Size(Me.Width, newH)
-            Else
-                Dim newH As Integer = Math.Max(1, CInt(最终高度 * eased))
-                Me.Size = New Size(Me.Width, newH)
-            End If
-            RequestV3Render()
+            展开关闭当前高度 = 展开关闭起始高度 +
+                                (展开关闭目标高度 - 展开关闭起始高度) * eased
+            设置展开关闭裁剪高度(CInt(Math.Round(展开关闭当前高度, MidpointRounding.AwayFromZero)))
+            RequestGpuRender()
 
             If t >= 1.0F Then
                 停止展开关闭驱动()
@@ -1290,8 +1291,9 @@ Public Class ModernContextMenu
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
-                    Me.Size = New Size(Me.Width, 最终高度)
-                    RequestV3Render()
+                    展开关闭当前高度 = 展开关闭目标高度
+                    清除展开关闭裁剪()
+                    RequestGpuRender()
                 End If
             End If
         End Sub
@@ -1300,6 +1302,8 @@ Public Class ModernContextMenu
             If 正在关闭动画 Then Return
             正在关闭动画 = True
             展开关闭动画中 = True
+            展开关闭起始高度 = Math.Max(1.0F, 展开关闭当前高度)
+            展开关闭目标高度 = 1.0F
             展开关闭秒表.Restart()
             启动展开关闭驱动()
         End Sub
@@ -1308,6 +1312,32 @@ Public Class ModernContextMenu
             正在关闭动画 = False
             展开关闭动画中 = False
             执行关闭()
+        End Sub
+
+        Private Sub 设置展开关闭裁剪高度(height As Integer)
+            If IsDisposed OrElse Width <= 0 OrElse 最终高度 <= 0 Then Return
+            Dim clippedHeight = Math.Max(1, Math.Min(最终高度, height))
+            If 动画裁剪高度 = clippedHeight AndAlso 动画裁剪区域 IsNot Nothing Then Return
+
+            ' 保持 HWND / swap chain 尺寸稳定，只裁剪可见区域；改变窗口高度会触发
+            ' swap chain 重建和文本重新栅格化，从而在动画中产生文字抖动。
+            Dim newRegion As New Region(New Rectangle(0, 0, Width, clippedHeight))
+            Dim oldRegion = 动画裁剪区域
+            动画裁剪区域 = newRegion
+            动画裁剪高度 = clippedHeight
+            Me.Region = newRegion
+            If oldRegion IsNot Nothing Then oldRegion.Dispose()
+        End Sub
+
+        Private Sub 清除展开关闭裁剪()
+            Dim oldRegion = 动画裁剪区域
+            动画裁剪区域 = Nothing
+            动画裁剪高度 = -1
+            Try
+                If Not IsDisposed Then Me.Region = Nothing
+            Catch
+            End Try
+            If oldRegion IsNot Nothing Then oldRegion.Dispose()
         End Sub
 
 #End Region
@@ -1442,6 +1472,7 @@ Public Class ModernContextMenu
             If 父弹窗 Is Nothing AndAlso Not 正在关闭 Then
                 Application.RemoveMessageFilter(Me)
             End If
+            清除展开关闭裁剪()
             释放D2D资源()
         End Sub
 

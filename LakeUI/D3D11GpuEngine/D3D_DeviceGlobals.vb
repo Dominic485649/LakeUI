@@ -6,11 +6,11 @@ Imports Vortice.DXGI
 ' 文件内统一使用全限定 Vortice.Direct3D.FeatureLevel / Vortice.Direct3D.DriverType。
 
 ''' <summary>
-''' D3D11 + D2D 1.1 Device 进程级单例（V3 兼容基础设施 / 设备丢失自动重建）。
+''' D3D11 + D2D 1.1 Device 进程级单例（GPU 核心基础设施 / 设备丢失自动重建）。
 '''
 ''' === 设计目标 ===
 ''' • 进程内只创建一份 <see cref="ID3D11Device"/> + <see cref="ID2D1Device"/>，所有 Form 共享。
-''' • 为 V3 窗口 compositor 提供 <see cref="ID2D1DeviceContext"/> 与共享设备。
+''' • 为 GPU 窗口 compositor 提供 <see cref="ID2D1DeviceContext"/> 与共享设备。
 ''' • LakeUI 假定目标环境具备硬件 D3D11；不提供 WARP 或 CPU 绘制回退路线。
 '''
 ''' === 设备丢失（device lost / TDR / 远程桌面切换）处理 ===

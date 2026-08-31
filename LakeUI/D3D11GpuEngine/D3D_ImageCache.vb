@@ -142,6 +142,11 @@ Public NotInheritable Class D3D_ImageCache
     Public Sub Dispose() Implements IDisposable.Dispose
         If _disposed Then Return
         _disposed = True
+        ' ImageCache owns the key space inside the shared texture cache.
+        ' Release those entries here as well so standalone users do not retain
+        ' GPU bitmaps (and their source Image references) until the compositor
+        ' happens to be disposed.
+        Try : Invalidate() : Catch : End Try
         GC.SuppressFinalize(Me)
     End Sub
 End Class

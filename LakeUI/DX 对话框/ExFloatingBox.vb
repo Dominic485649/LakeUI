@@ -221,7 +221,7 @@ End Module
 ''' </summary>
 Friend Class ExFloatingBoxForm
     Inherits Form
-    Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements IMessageFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
 #Region "Win32"
 
@@ -455,7 +455,7 @@ Friend Class ExFloatingBoxForm
         Me.DoubleBuffered = True
         Me.BackColor = 主题.CardBackColor
 
-        SC = V3_DpiContext.FromControl(Me).Scale
+        SC = D3D_DpiContext.FromControl(Me).Scale
         缩放常量()
 
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(anchor, Me)
@@ -523,7 +523,7 @@ Friend Class ExFloatingBoxForm
                 Me.Location = 最终位置
                 停止动画()
                 毛玻璃?.Prepare()
-                RequestV3Render()
+                RequestGpuRender()
             End If
         ElseIf 正在关闭动画 Then
             Dim duration As Integer = 主题.CloseAnimationDuration
@@ -848,7 +848,7 @@ Friend Class ExFloatingBoxForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: floating box pixels are emitted by RenderGpu.
+        ' GPU-only: floating box pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
@@ -858,14 +858,14 @@ Friend Class ExFloatingBoxForm
             EnableWindow(Me.Owner.Handle, True)
         End If
         毛玻璃?.Prepare()
-        RequestV3Render()
+        RequestGpuRender()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
@@ -886,17 +886,17 @@ Friend Class ExFloatingBoxForm
             主题.CardBorderColor, 1.0F)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub RequestV3Render()
-        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    Private Sub RequestGpuRender()
+        RequestGpuRender(New Rectangle(Point.Empty, Me.Size))
     End Sub
 
-    Private Sub RequestV3Render(dirtyRect As Rectangle)
+    Private Sub RequestGpuRender(dirtyRect As Rectangle)
         If IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
 #End Region

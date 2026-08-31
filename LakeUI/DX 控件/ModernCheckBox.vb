@@ -4,7 +4,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("CheckedChanged")>
 Public Class ModernCheckBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Private _subTextFontCache As Font
     Private _subTextFontCacheKey As String
@@ -58,7 +58,7 @@ Public Class ModernCheckBox
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
         If _backgroundSource IsNot Nothing Then
@@ -72,7 +72,7 @@ Public Class ModernCheckBox
         绘制禁用遮罩_GPU(context)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -320,19 +320,19 @@ Public Class ModernCheckBox
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
@@ -348,7 +348,7 @@ Public Class ModernCheckBox
                 Checked = Not Checked
             End If
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Function 点击命中操作框(位置 As Point) As Boolean
         If 允许任意区域点击 Then Return True
@@ -364,13 +364,13 @@ Public Class ModernCheckBox
             鼠标状态 = MouseStateEnum.Normal
             动画助手.StopAnimation()
         End If
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         重置文本行高缓存()
         更新自动尺寸()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 
@@ -392,27 +392,27 @@ Public Class ModernCheckBox
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             更新自动尺寸()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me)
+    Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me)
 
-    Private Sub 勾选动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+    Private Sub 勾选动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
         sink.InvalidateAll()
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private _缓存主文本行高 As Integer = -1
@@ -439,7 +439,7 @@ Public Class ModernCheckBox
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -470,7 +470,7 @@ Public Class ModernCheckBox
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
+     Description("背景采样源。设置后记录关联源控件；GPU 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -479,10 +479,15 @@ Public Class ModernCheckBox
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 #End Region
 
 #Region "模式属性"
@@ -655,7 +660,7 @@ Public Class ModernCheckBox
             If MyBase.Text <> value Then
                 MyBase.Text = value
                 更新自动尺寸()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -711,7 +716,7 @@ Public Class ModernCheckBox
             _缓存次文本行高 = -1
             次要文本字号 = value
             释放次文本字体()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -847,7 +852,7 @@ Public Class ModernCheckBox
                         Me.Size = 自动尺寸前的大小
                     End If
                 End If
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -900,13 +905,13 @@ Public Class ModernCheckBox
         释放次文本字体()
         重置文本行高缓存()
         更新自动尺寸()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         更新自动尺寸()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private 正在更新尺寸 As Boolean = False

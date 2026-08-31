@@ -1,6 +1,5 @@
 Public Class JustEmptyControl
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
-
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
@@ -13,33 +12,19 @@ Public Class JustEmptyControl
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        MyBase.OnPaintBackground(e)
+        ' V5 surface owns the pixels; transparent controls sample the nearest GPU ancestor.
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
+        If BackColor.A > 0 Then context.FillRectangle(New RectangleF(0, 0, Width, Height), BackColor)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
-        Return New Rectangle(Point.Empty, Me.Size)
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, ClientSize)
     End Function
-
-    Private Sub 请求V3渲染()
-        If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, New Rectangle(Point.Empty, Me.Size))
-    End Sub
-
-    Protected Overrides Sub OnSizeChanged(e As EventArgs)
-        MyBase.OnSizeChanged(e)
-        请求V3渲染()
-    End Sub
-
-    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
-        MyBase.OnDpiChangedAfterParent(e)
-        请求V3渲染()
-    End Sub
 #End Region
 End Class

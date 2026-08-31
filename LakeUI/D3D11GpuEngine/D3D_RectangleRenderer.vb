@@ -9,7 +9,7 @@ Imports Vortice.Direct2D1
 '
 ' 本文件同时服务两条路径：
 ' • GDI+ 路径：创建 GraphicsPath，供 Region、裁剪、分层窗口阴影或旧控件使用。
-' • V3 路径只保留 D2D geometry 构造，实际绘制由 D3D_PaintContext 完成。
+' • GPU 路径只保留 D2D geometry 构造，实际绘制由 D3D_PaintContext 完成。
 '
 ' 调用原则：
 ' • 创建出来的 GDI+ Path / D2D Geometry 归调用方所有，必须 Using/Dispose。

@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 <Docking(DockingBehavior.Ask)>
 <DefaultEvent("Scroll")>
 Public Class ModernPanel
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     ''' <summary>
     ''' 滚动策略枚举。
@@ -83,25 +83,25 @@ Public Class ModernPanel
             _contentSizeDirty = True
             更新滚动区域()
             Me.PerformLayout()
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function 获取边框内边距() As Integer
@@ -127,7 +127,7 @@ Public Class ModernPanel
     Public Overrides ReadOnly Property DisplayRectangle As Rectangle
         Get
             Dim ep As Padding = 获取有效内边距()
-            Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
+            Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + D3D_ScrollBarRenderer.Margin
             Return New Rectangle(
                 ep.Left,
                 ep.Top,
@@ -164,7 +164,7 @@ Public Class ModernPanel
     ''' <summary>获取扣除滚动条保留区域后的有效视口大小。</summary>
     Private Function 获取有效视口大小() As Size
         Dim ep As Padding = 获取有效内边距()
-        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + D3D_ScrollBarRenderer.Margin
         Dim w As Integer = Me.Width - ep.Horizontal - If(_showVScroll, sbReserve, 0)
         Dim h As Integer = Me.Height - ep.Vertical - If(_showHScroll, sbReserve, 0)
         Return New Size(Math.Max(0, w), Math.Max(0, h))
@@ -258,7 +258,7 @@ Public Class ModernPanel
             停止图片动画()
             _image = value
             启动图片动画()
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -269,7 +269,7 @@ Public Class ModernPanel
     Private Const MinimumAnimationFrameDelayMs As Integer = 10
 
     Private _animatedImage As Image = Nothing
-    Private _animationScheduler As V3_AnimationHelper = Nothing
+    Private _animationScheduler As D3D_AnimationHelper = Nothing
     Private _animationFrameDimension As FrameDimension = Nothing
     Private _animationFrameDelays As Integer() = Array.Empty(Of Integer)()
     Private _animationFrameCount As Integer = 0
@@ -453,7 +453,7 @@ Public Class ModernPanel
 
     Private Sub 恢复图片动画渲染()
         If _animationScheduler Is Nothing Then
-            _animationScheduler = New V3_AnimationHelper(Me)
+            _animationScheduler = New D3D_AnimationHelper(Me)
             _animationScheduler.SetDirtyRectProvider(
                 Function()
                     If Not _animationFrameDirty Then Return Rectangle.Empty
@@ -471,7 +471,7 @@ Public Class ModernPanel
         Catch
             停止图片动画计时器(True)
         End Try
-        请求V3渲染(获取背景图片刷新区域())
+        请求GPU渲染(获取背景图片刷新区域())
     End Sub
 
     Private Sub 停止图片动画计时器(disposeTimer As Boolean)
@@ -680,7 +680,7 @@ Public Class ModernPanel
         Set(value As ImageFillMode)
             If _imageFillMode <> value Then
                 _imageFillMode = value
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -743,10 +743,15 @@ Public Class ModernPanel
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
                 D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 
     Private Sub 解除背景穿透消费者()
         Try : D3D_RenderCore.UnregisterBackgroundConsumer(Me, recursive:=True) : Catch : End Try
@@ -845,7 +850,7 @@ Public Class ModernPanel
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -903,7 +908,7 @@ Public Class ModernPanel
                 _childLayouts.Clear()
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -919,7 +924,7 @@ Public Class ModernPanel
                 _flowDirection = value
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -935,7 +940,7 @@ Public Class ModernPanel
                 _wrapContents = value
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
@@ -945,10 +950,10 @@ Public Class ModernPanel
 #Region "内部状态"
 
     Private _vScrollOffset As Integer = 0
-    Private ReadOnly _vScrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _vScrollBar As New D3D_ScrollBarRenderer()
 
     Private _hScrollOffset As Integer = 0
-    Private ReadOnly _hScrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _hScrollBar As New D3D_ScrollBarRenderer()
 
     Private _contentSize As Size = Size.Empty
     Private _contentSizeDirty As Boolean = True
@@ -996,7 +1001,7 @@ Public Class ModernPanel
             Dim scaledScrollBarWidth As Integer = CInt(Math.Round(滚动条宽度 * s))
             Dim inset As Integer = 获取边框内边距()
             Dim ep As Padding = 获取有效内边距()
-            Dim sbReserve As Integer = scaledScrollBarWidth + V3_ScrollBarRenderer.Margin
+            Dim sbReserve As Integer = scaledScrollBarWidth + D3D_ScrollBarRenderer.Margin
             Dim viewW As Integer = Math.Max(0, Me.Width - ep.Horizontal - If(_showVScroll, sbReserve, 0))
             Dim viewH As Integer = Math.Max(0, Me.Height - ep.Vertical - If(_showHScroll, sbReserve, 0))
 
@@ -1036,7 +1041,7 @@ Public Class ModernPanel
 
         Dim inset As Integer = 获取边框内边距()
         Dim ep As Padding = 获取有效内边距()
-        Dim sbReserve As Integer = scaledScrollBarWidth + V3_ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = scaledScrollBarWidth + D3D_ScrollBarRenderer.Margin
 
         ' 不含滚动条的完整视口
         Dim fullW As Integer = Me.Width - ep.Horizontal
@@ -1134,7 +1139,7 @@ Public Class ModernPanel
 
 #Region "绘制"
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         更新滚动区域()
@@ -1154,7 +1159,7 @@ Public Class ModernPanel
 
         Dim scaledRadius As Single = 边框圆角半径 * scale
         Dim hasRoundedCorners As Boolean = 边框圆角半径 > 0 AndAlso Not 圆角位置.IsNone
-        Dim backColorMask As Color = MyBase.BackColor
+        Dim 基础背景颜色 As Color = MyBase.BackColor
 
         Dim geo As ID2D1Geometry = Nothing
         If hasRoundedCorners Then
@@ -1163,8 +1168,10 @@ Public Class ModernPanel
 
         绘制背景源_GPU(context, boundsRect)
 
-        If _backgroundSource Is Nothing AndAlso backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-            填充形状_GPU(context, boundsRect, geo, backColorMask)
+        ' 面板颜色层固定从下到上合成：BackColor、BackColor1、OverlayColor。
+        ' 背景图片属于内容背景，位于 BackColor1 与 OverlayColor 之间。
+        If 基础背景颜色.A > 0 Then
+            填充形状_GPU(context, boundsRect, geo, 基础背景颜色)
         End If
         If 背景颜色.A > 0 Then
             填充形状_GPU(context, boundsRect, geo, 背景颜色)
@@ -1385,17 +1392,18 @@ Public Class ModernPanel
     End Sub
 
     Private Function 需要自绘背景() As Boolean
-        ' V3 契约：以下任一为真都不能交给基类绘制背景：
+        ' GPU 契约：以下任一为真都不能交给基类绘制背景：
         '   1) 圆角 > 0（圆角外空白要透出底色 / 背景源）
         '   2) BackColor1 (背景颜色) 半透明 → 自身实色填充层有 alpha
         '   3) MyBase.BackColor 半透明 → 走 .NET 自身透明逻辑（OnPaintBackground 仍交回基类）
-        '      —— 但 BackgroundSource 已设置时跳过 BackColor 逻辑直接画背景穿透。
+        '   4) OverlayColor 非透明 → 叠加层必须由 V5 表面统一合成，不能被基类背景覆盖。
         Return 边框圆角半径 > 0 OrElse 背景颜色.A < 255 OrElse
-               _backgroundSource IsNot Nothing OrElse MyBase.BackColor.A < 255
+               _backgroundSource IsNot Nothing OrElse MyBase.BackColor.A < 255 OrElse
+               遮罩颜色.A > 0
     End Function
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If _backgroundSource IsNot Nothing Then Return
+        If 需要自绘背景() Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -1416,7 +1424,7 @@ Public Class ModernPanel
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                请求V3渲染()
+                请求GPU渲染()
             End If
             Return
         End If
@@ -1427,7 +1435,7 @@ Public Class ModernPanel
             If newOff <> _hScrollOffset Then
                 _hScrollOffset = newOff
                 快速滚动更新()
-                请求V3渲染()
+                请求GPU渲染()
             End If
             Return
         End If
@@ -1435,7 +1443,7 @@ Public Class ModernPanel
         Dim needInvalidate As Boolean = False
         If _vScrollBar.UpdateHover(e.Location) Then needInvalidate = True
         If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1449,7 +1457,7 @@ Public Class ModernPanel
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
@@ -1460,7 +1468,7 @@ Public Class ModernPanel
             If newHOff <> _hScrollOffset Then
                 _hScrollOffset = newHOff
                 快速滚动更新()
-                请求V3渲染()
+                请求GPU渲染()
                 Return
             End If
         End If
@@ -1477,7 +1485,7 @@ Public Class ModernPanel
         Dim needInvalidate As Boolean = False
         If _vScrollBar.ResetHover() Then needInvalidate = True
         If _hScrollBar.ResetHover() Then needInvalidate = True
-        If needInvalidate Then 请求V3渲染()
+        If needInvalidate Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1487,22 +1495,22 @@ Public Class ModernPanel
 
         If (Control.ModifierKeys And Keys.Shift) = Keys.Shift Then
             If _showHScroll Then
-                Dim newHOff = V3_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, _contentSize.Width, viewport.Width, 水平滚动步长)
+                Dim newHOff = D3D_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, _contentSize.Width, viewport.Width, 水平滚动步长)
                 If newHOff <> _hScrollOffset Then
                     _hScrollOffset = newHOff
                     快速滚动更新()
-                    请求V3渲染()
+                    请求GPU渲染()
                 End If
             End If
             Return
         End If
 
         If _showVScroll Then
-            Dim newOff = V3_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _vScrollOffset, _contentSize.Height, viewport.Height, 垂直滚动步长)
+            Dim newOff = D3D_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _vScrollOffset, _contentSize.Height, viewport.Height, 垂直滚动步长)
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End If
     End Sub
@@ -1548,7 +1556,7 @@ Public Class ModernPanel
         MyBase.OnSizeChanged(e)
         _contentSizeDirty = True
         更新滚动区域()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedBeforeParent(e As EventArgs)
@@ -1578,7 +1586,7 @@ Public Class ModernPanel
         _inDpiChange = False
         更新滚动区域()
         Me.PerformLayout()
-        请求V3渲染(True)
+        请求GPU渲染(True)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1587,7 +1595,7 @@ Public Class ModernPanel
         更新滚动区域()
         Me.PerformLayout()
         D3D_RenderCore.InvalidateExistingTextResources(Me)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnControlAdded(e As ControlEventArgs)
@@ -1604,7 +1612,7 @@ Public Class ModernPanel
         AddHandler e.Control.LocationChanged, AddressOf 子控件位置变更
         _contentSizeDirty = True
         更新滚动区域()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnControlRemoved(e As ControlEventArgs)
@@ -1614,7 +1622,7 @@ Public Class ModernPanel
         RemoveHandler e.Control.LocationChanged, AddressOf 子控件位置变更
         _contentSizeDirty = True
         更新滚动区域()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private _suppressLocationSync As Boolean = False
@@ -1626,7 +1634,7 @@ Public Class ModernPanel
         _contentSizeDirty = True
         If _inScrollUpdate Then Return
         更新滚动区域()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Private Sub 子控件位置变更(sender As Object, e As EventArgs)
@@ -1691,7 +1699,7 @@ Public Class ModernPanel
     Private Sub 执行流式排布()
         Dim s As Single = DpiScale()
         Dim scaledScrollBarWidth As Integer = CInt(Math.Round(滚动条宽度 * s))
-        Dim sbReserve As Integer = scaledScrollBarWidth + V3_ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = scaledScrollBarWidth + D3D_ScrollBarRenderer.Margin
         Dim ep As Padding = 获取有效内边距()
 
         ' 稳定的换行/换列边界：使用可能显示滚动条后的视口尺寸，避免布局-滚动条反馈环。
@@ -1789,7 +1797,7 @@ Public Class ModernPanel
         _hScrollOffset = Math.Max(0, horizontalOffset)
         _vScrollOffset = Math.Max(0, verticalOffset)
         更新滚动区域()
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     ''' <summary>获取当前垂直滚动偏移。</summary>

@@ -40,12 +40,12 @@ Partial Class ModernColorDialog
         ' 
         ' ModernContextMenu1
         ' 
+        ModernContextMenu1.AnimationFPS = 0
         ModernContextMenu1.BackdropBlurPasses = 1
         ModernContextMenu1.BackdropBlurRadius = 10
         ModernContextMenu1.BackdropMode = ModernContextMenu.BackdropModeEnum.Auto
         ModernContextMenu1.BackdropNoiseOpacity = CByte(0)
         ModernContextMenu1.BorderSize = 2
-        ModernContextMenu1.AnimationFPS = 0
         ModernContextMenu1.HoverRadius = 5
         ModernContextMenu1.IconSize = 0
         ModernContextMenu1.ItemPadding = New Padding(7, 0, 0, 0)

@@ -1,12 +1,12 @@
 ''' <summary>
-''' V3_MigrationAnnotations 提供后续控件迁移诊断标记。
+''' D3D_MigrationAnnotations 提供后续控件迁移诊断标记。
 ''' 这些类型不持有 GPU 对象，不改变运行时行为，只帮助标记哪些控件可迁移、阻塞原因和迁移批次。
 ''' </summary>
-Friend Module V3_MigrationAnnotations
+Friend Module D3D_MigrationAnnotations
 End Module
 
 <AttributeUsage(AttributeTargets.Class, AllowMultiple:=False, Inherited:=True)>
-Friend NotInheritable Class V3_GpuMigrationCandidateAttribute
+Friend NotInheritable Class D3D_GpuMigrationCandidateAttribute
     Inherits Attribute
 
     Public Sub New(Optional note As String = Nothing)
@@ -17,7 +17,7 @@ Friend NotInheritable Class V3_GpuMigrationCandidateAttribute
 End Class
 
 <AttributeUsage(AttributeTargets.Class, AllowMultiple:=True, Inherited:=True)>
-Friend NotInheritable Class V3_GpuMigrationBlockedAttribute
+Friend NotInheritable Class D3D_GpuMigrationBlockedAttribute
     Inherits Attribute
 
     Public Sub New(reason As String)

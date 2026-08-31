@@ -14,7 +14,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SampleUpdated")>
 Public Class RamMonitor
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
 #Region "D3D 渲染资源"
 #End Region
@@ -497,7 +497,7 @@ Public Class RamMonitor
             End SyncLock
         End If
 
-        请求V3渲染()
+        请求GPU渲染()
         RaiseEvent SampleUpdated(Me, EventArgs.Empty)
     End Sub
 
@@ -512,7 +512,7 @@ Public Class RamMonitor
         If 采样器实例 Is Nothing Then Return
         Try
             最近样本 = RamSampler.Sample()
-            请求V3渲染()
+            请求GPU渲染()
         Catch
         End Try
     End Sub
@@ -522,7 +522,7 @@ Public Class RamMonitor
         SyncLock 历史锁
             历史数据.Clear()
         End SyncLock
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     ''' <summary>当前采样的只读快照。</summary>
@@ -544,7 +544,7 @@ Public Class RamMonitor
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
         If _backgroundSource IsNot Nothing Then
@@ -561,7 +561,7 @@ Public Class RamMonitor
         End If
     End Sub
 
-    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+    Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
@@ -939,21 +939,21 @@ Public Class RamMonitor
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return V3_DpiContext.FromControl(Me).Scale
+        Return D3D_DpiContext.FromControl(Me).Scale
     End Function
 
-    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
-        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
+        请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
     End Sub
 
-    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+    Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
-        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Function 应执行采样刷新() As Boolean
@@ -990,7 +990,7 @@ Public Class RamMonitor
         Dim newIdx As Integer = If(_悬停有效, 样本索引从X坐标(_悬停X, _图表矩形), -1)
         _悬停样本索引 = newIdx
         ' 只在命中的样本索引变化或悬停有效性切换时才重绘，避免每像素移动都触发重绘
-        If _悬停有效 <> wasValid OrElse newIdx <> prevIdx Then 请求V3渲染()
+        If _悬停有效 <> wasValid OrElse newIdx <> prevIdx Then 请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -998,7 +998,7 @@ Public Class RamMonitor
         If _悬停有效 Then
             _悬停有效 = False
             _悬停样本索引 = -1
-            请求V3渲染()
+            请求GPU渲染()
         End If
     End Sub
 
@@ -1028,27 +1028,27 @@ Public Class RamMonitor
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
 #End Region
 
@@ -1069,7 +1069,7 @@ Public Class RamMonitor
             Else
                 采样定时器.Stop()
             End If
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1099,7 +1099,7 @@ Public Class RamMonitor
                 Case RamMonitorLanguage.Chinese : RamMonitorStrings.ApplyChinese()
                 Case RamMonitorLanguage.English : RamMonitorStrings.ApplyEnglish()
             End Select
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1155,14 +1155,14 @@ Public Class RamMonitor
         If cur.Position = value Then Return
         cur.Position = value
         字段配置(f) = cur
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Sub 设置字段顺序(f As RamTextField, value As Integer)
         Dim cur = 字段配置(f)
         If cur.Order = value Then Return
         cur.Order = value
         字段配置(f) = cur
-        请求V3渲染()
+        请求GPU渲染()
     End Sub
     Private Function 取字段位置(f As RamTextField) As TextSlotPosition
         Return 字段配置(f).Position
@@ -1413,7 +1413,7 @@ Public Class RamMonitor
         End Get
         Set(value As Boolean)
             启用历史记录 = value
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1431,7 +1431,7 @@ Public Class RamMonitor
                 Dim overflow As Integer = 历史数据.Count - value
                 If overflow > 0 Then 历史数据.RemoveRange(0, overflow)
             End SyncLock
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1511,7 +1511,7 @@ Public Class RamMonitor
         Set(value As Boolean)
             启用悬停读数值 = value
             If Not value Then _悬停有效 = False
-            请求V3渲染()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1573,7 +1573,7 @@ Public Class RamMonitor
     ' ====== SSAA ======
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -1596,10 +1596,15 @@ Public Class RamMonitor
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                请求V3渲染()
+                请求GPU渲染()
             End If
         End Set
     End Property
+
+    Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
+        source = _backgroundSource
+        Return source IsNot Nothing
+    End Function
 #End Region
 
 #Region "禁用属性"
