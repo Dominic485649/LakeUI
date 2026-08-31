@@ -587,6 +587,7 @@ Friend Class ExMsgBoxForm
                 .BorderRadius = 主题.ButtonBorderRadius,
                 .BorderSize = 1,
                 .AnimationDuration = 150,
+                .RippleEnabled = False,
                 .TabStop = True,
                 .TabIndex = i
             }
@@ -893,6 +894,7 @@ Friend Class ExMsgBoxForm
                 .BorderRadius = 主题.ButtonBorderRadius,
                 .BorderSize = 1,
                 .AnimationDuration = 150,
+                .RippleEnabled = False,
                 .TabStop = True,
                 .TabIndex = i
             }

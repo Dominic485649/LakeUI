@@ -980,6 +980,7 @@ Friend Class ExOverlayMsgBoxHostForm
             .Tag = tag,
             .BorderRadius = 0,
             .AnimationDuration = 150,
+            .RippleEnabled = False,
             .TabStop = True,
             .TabIndex = index
         }
@@ -1642,6 +1643,7 @@ Friend Class ExOverlayMsgBoxForm
             .BorderRadius = 0,
             .BorderSize = 1,
             .AnimationDuration = 150,
+            .RippleEnabled = False,
             .TabStop = True,
             .TabIndex = index
         }

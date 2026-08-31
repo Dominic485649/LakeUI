@@ -708,6 +708,7 @@ Friend Class ExFloatingBoxForm
             .BorderRadius = 主题.ButtonBorderRadius,
             .BorderSize = 1,
             .AnimationDuration = 150,
+            .RippleEnabled = False,
             .TabStop = False,
             .TabIndex = index
         }
