@@ -18,9 +18,15 @@ Partial Class Form_LakeUINotifications
     <System.Diagnostics.DebuggerStepThrough()>
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
         ModernTextBoxLog = New ModernTextBox()
-        Label9 = New Label()
-        Panel4 = New Panel()
+        Label9 = New HtmlColorLabel()
+        Label9.BackColor = Color.Transparent
+        Panel4 = New ModernPanel()
+        Panel4.BackColor1 = Color.Transparent
+        Panel4.BackColor = Color.Transparent
+        Panel4.BorderSize = 0
         ModernButton14 = New ModernButton()
         Label16 = New JustEmptyControl()
         ModernButton13 = New ModernButton()
@@ -28,8 +34,12 @@ Partial Class Form_LakeUINotifications
         ModernButton12 = New ModernButton()
         Label14 = New JustEmptyControl()
         ModernButton11 = New ModernButton()
-        Label8 = New Label()
-        Panel3 = New Panel()
+        Label8 = New HtmlColorLabel()
+        Label8.BackColor = Color.Transparent
+        Panel3 = New ModernPanel()
+        Panel3.BackColor1 = Color.Transparent
+        Panel3.BackColor = Color.Transparent
+        Panel3.BorderSize = 0
         ModernButton10 = New ModernButton()
         Label13 = New JustEmptyControl()
         ModernButton9 = New ModernButton()
@@ -37,14 +47,22 @@ Partial Class Form_LakeUINotifications
         ModernButton8 = New ModernButton()
         Label11 = New JustEmptyControl()
         ModernButton7 = New ModernButton()
-        Panel2 = New Panel()
+        Panel2 = New ModernPanel()
+        Panel2.BackColor1 = Color.Transparent
+        Panel2.BackColor = Color.Transparent
+        Panel2.BorderSize = 0
         ModernButton6 = New ModernButton()
         Label10 = New JustEmptyControl()
         ModernButton5 = New ModernButton()
-        Label7 = New Label()
+        Label7 = New HtmlColorLabel()
+        Label7.BackColor = Color.Transparent
         ModernTextBoxStatus = New ModernTextBox()
-        Label6 = New Label()
-        Panel1 = New Panel()
+        Label6 = New HtmlColorLabel()
+        Label6.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -52,7 +70,8 @@ Partial Class Form_LakeUINotifications
         ModernButton2 = New ModernButton()
         Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel4.SuspendLayout()
         Panel3.SuspendLayout()
@@ -586,8 +605,8 @@ Partial Class Form_LakeUINotifications
 
     Friend WithEvents ModernPanel1 As ModernPanel
     Friend WithEvents ModernTextBoxLog As ModernTextBox
-    Friend WithEvents Label9 As Label
-    Friend WithEvents Panel4 As Panel
+    Friend WithEvents Label9 As HtmlColorLabel
+    Friend WithEvents Panel4 As ModernPanel
     Friend WithEvents ModernButton14 As ModernButton
     Friend WithEvents Label16 As JustEmptyControl
     Friend WithEvents ModernButton13 As ModernButton
@@ -595,8 +614,8 @@ Partial Class Form_LakeUINotifications
     Friend WithEvents ModernButton12 As ModernButton
     Friend WithEvents Label14 As JustEmptyControl
     Friend WithEvents ModernButton11 As ModernButton
-    Friend WithEvents Label8 As Label
-    Friend WithEvents Panel3 As Panel
+    Friend WithEvents Label8 As HtmlColorLabel
+    Friend WithEvents Panel3 As ModernPanel
     Friend WithEvents ModernButton10 As ModernButton
     Friend WithEvents Label13 As JustEmptyControl
     Friend WithEvents ModernButton9 As ModernButton
@@ -604,14 +623,14 @@ Partial Class Form_LakeUINotifications
     Friend WithEvents ModernButton8 As ModernButton
     Friend WithEvents Label11 As JustEmptyControl
     Friend WithEvents ModernButton7 As ModernButton
-    Friend WithEvents Panel2 As Panel
+    Friend WithEvents Panel2 As ModernPanel
     Friend WithEvents ModernButton6 As ModernButton
     Friend WithEvents Label10 As JustEmptyControl
     Friend WithEvents ModernButton5 As ModernButton
-    Friend WithEvents Label7 As Label
+    Friend WithEvents Label7 As HtmlColorLabel
     Friend WithEvents ModernTextBoxStatus As ModernTextBox
-    Friend WithEvents Label6 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Label6 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -619,5 +638,5 @@ Partial Class Form_LakeUINotifications
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label1 As Label
+    Friend WithEvents Label1 As HtmlColorLabel
 End Class

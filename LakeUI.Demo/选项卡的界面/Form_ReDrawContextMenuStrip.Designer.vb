@@ -33,10 +33,17 @@ Partial Class Form_ReDrawContextMenuStrip
         ToolStripMenuItem6 = New ToolStripMenuItem()
         ToolStripSeparator3 = New ToolStripSeparator()
         ModernPanel1 = New ModernPanel()
-        Label3 = New Label()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
+        Label3 = New HtmlColorLabel()
+        Label3.BackColor = Color.Transparent
         ModernTextBox1 = New ModernTextBox()
-        Label6 = New Label()
-        Panel1 = New Panel()
+        Label6 = New HtmlColorLabel()
+        Label6.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label5 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -44,7 +51,8 @@ Partial Class Form_ReDrawContextMenuStrip
         ModernButton2 = New ModernButton()
         Label10 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label11 = New Label()
+        Label11 = New HtmlColorLabel()
+        Label11.BackColor = Color.Transparent
         ReDrawContextMenuStrip1.SuspendLayout()
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
@@ -340,10 +348,10 @@ Partial Class Form_ReDrawContextMenuStrip
     Friend WithEvents ToolStripMenuItem6 As ToolStripMenuItem
     Friend WithEvents ToolStripSeparator3 As ToolStripSeparator
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As HtmlColorLabel
     Friend WithEvents ModernTextBox1 As ModernTextBox
-    Friend WithEvents Label6 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Label6 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label5 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -351,5 +359,5 @@ Partial Class Form_ReDrawContextMenuStrip
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label10 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label11 As Label
+    Friend WithEvents Label11 As HtmlColorLabel
 End Class

@@ -443,6 +443,7 @@ Friend Class ExInputBoxForm
         输入框 = New ModernTextBox() With {
             .Text = defaultResponse,
             .Font = New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.5F, FontStyle.Regular),
+            .BackColor = Color.Transparent,
             .BackColor1 = 主题.InputBackColor,
             .ForeColor = 主题.InputForeColor,
             .BorderColor = 主题.InputBorderColor,
@@ -456,7 +457,6 @@ Friend Class ExInputBoxForm
         }
         If MessageDialogRendering.IsGlassEnabled() Then
             Dim inputOverlay = Color.FromArgb(40, 220, 220, 220)
-            输入框.BackColor = Color.Transparent
             输入框.BackColor1 = inputOverlay
             输入框.BorderColor = inputOverlay
             输入框.BorderColorFocus = inputOverlay

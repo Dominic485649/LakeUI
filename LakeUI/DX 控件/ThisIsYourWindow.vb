@@ -159,6 +159,10 @@ Public Class ThisIsYourWindow
     Private Shared Function GetCursorPos(ByRef lpPoint As NATIVEPOINT) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
+    <DllImport("user32.dll")>
+    Private Shared Function GetForegroundWindow() As IntPtr
+    End Function
+
     <StructLayout(LayoutKind.Sequential)>
     Private Structure OSVERSIONINFOEX
         Public dwOSVersionInfoSize As Integer
@@ -378,6 +382,45 @@ Public Class ThisIsYourWindow
 
     Private Function 是首个附加窗体(form As Form) As Boolean
         Return form IsNot Nothing AndAlso ReferenceEquals(form, _首个附加窗体)
+    End Function
+
+    ''' <summary>
+    ''' Owned modal dialogs deactivate their owner at the Win32 level, but the
+    ''' owner is still the active application surface from a visual perspective.
+    ''' Keep the owner's backdrop/chrome colors unchanged while such a dialog is
+    ''' active; switching to the inactive tint would darken every mapped child.
+    ''' </summary>
+    Private Shared Function 由自有对话框保持激活视觉(form As Form) As Boolean
+        If form Is Nothing OrElse form.IsDisposed Then Return False
+
+        Dim activeForm As Form = Nothing
+        Try
+            Dim foregroundHandle = GetForegroundWindow()
+            If foregroundHandle <> IntPtr.Zero Then
+                Dim activeControl = Control.FromHandle(foregroundHandle)
+                If activeControl Is Nothing Then Return False
+                activeForm = TryCast(activeControl, Form)
+                If activeForm Is Nothing Then activeForm = activeControl.FindForm()
+            Else
+                activeForm = Form.ActiveForm
+            End If
+        Catch
+            activeForm = Nothing
+        End Try
+        If activeForm Is Nothing OrElse activeForm Is form OrElse activeForm.IsDisposed Then Return False
+
+        Dim current As Form = activeForm
+        For i As Integer = 0 To 16
+            Dim owner = current.Owner
+            If owner Is Nothing Then Return False
+            If ReferenceEquals(owner, form) Then Return True
+            current = owner
+        Next
+        Return False
+    End Function
+
+    Private Shared Function 视觉上保持激活(form As Form, activated As Boolean) As Boolean
+        Return activated OrElse 由自有对话框保持激活视觉(form)
     End Function
 
     Private Function 全屏允许用于窗体(s As PerFormState) As Boolean
@@ -2163,8 +2206,8 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _毛玻璃Tint失焦颜色 As Color = Color.FromArgb(140, 24, 24, 24)
-    <Category("LakeUI - Backdrop"), Description("毛玻璃模式下失活窗口的 tint 叠加颜色。"), DefaultValue(GetType(Color), "140, 24, 24, 24")>
+    Private _毛玻璃Tint失焦颜色 As Color = Color.Empty
+    <Category("LakeUI - Backdrop"), Description("毛玻璃模式下失活窗口的 tint 叠加颜色。"), DefaultValue(GetType(Color), "")>
     Public Property BackdropTintInactiveColor As Color
         Get
             Return _毛玻璃Tint失焦颜色
@@ -2960,7 +3003,8 @@ Public Class ThisIsYourWindow
         Dim fullRect As New RectangleF(0, 0, w, h)
         Dim captionRect = 获取标题栏内容矩形(targetForm, w, h)
         Dim captionRectF As New RectangleF(captionRect.X, captionRect.Y, captionRect.Width, captionRect.Height)
-        Dim drew = 绘制毛玻璃背景_GPU(context, s, fullRect, captionRectF, s.Activated)
+        Dim drew = 绘制毛玻璃背景_GPU(context, s, fullRect, captionRectF,
+                                             视觉上保持激活(targetForm, s.Activated))
         If Not drew AndAlso targetForm.BackColor.A > 0 Then
             context.FillRectangle(fullRect, targetForm.BackColor)
             drew = True
@@ -3001,7 +3045,7 @@ Public Class ThisIsYourWindow
         Dim w As Integer = 真实尺寸.Width
         Dim h As Integer = 真实尺寸.Height
 
-        Dim active As Boolean = s.Activated
+        Dim active As Boolean = 视觉上保持激活(targetForm, s.Activated)
         Dim fullRect As New RectangleF(0, 0, w, h)
         Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm, w, h)
         Dim captionRectF As New RectangleF(captionRect.X, captionRect.Y, captionRect.Width, captionRect.Height)
@@ -3041,7 +3085,11 @@ Public Class ThisIsYourWindow
         If _毛玻璃模式 = BackdropModeEnum.None Then Return False
         If Not 毛玻璃允许用于窗体(s) Then Return False
 
-        Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
+        ' An empty inactive tint keeps the active composition, so focus changes do
+        ' not trigger a different backdrop overlay when the surface is repainted.
+        Dim tint As Color = If(active OrElse _毛玻璃Tint失焦颜色.IsEmpty,
+                               _毛玻璃Tint颜色,
+                               _毛玻璃Tint失焦颜色)
 
         Select Case _毛玻璃模式
             Case BackdropModeEnum.Image
@@ -3257,7 +3305,7 @@ Public Class ThisIsYourWindow
         Dim font As Font = If(_标题文字字体, s.HostForm.Font)
         If font Is Nothing Then Return
 
-        Dim fgColor As Color = If(s.Activated, _标题文字颜色, _标题文字失焦颜色)
+        Dim fgColor As Color = If(视觉上保持激活(s.HostForm, s.Activated), _标题文字颜色, _标题文字失焦颜色)
         If fgColor.A = 0 Then Return
 
         Dim textRect As RectangleF = 获取标题文字布局矩形(s)

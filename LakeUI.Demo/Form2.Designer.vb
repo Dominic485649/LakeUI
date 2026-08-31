@@ -22,7 +22,8 @@ Partial Class Form2
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         SuspendLayout()
         ' 
         ' Label1
@@ -49,5 +50,5 @@ Partial Class Form2
         ResumeLayout(False)
     End Sub
 
-    Friend WithEvents Label1 As Label
+    Friend WithEvents Label1 As HtmlColorLabel
 End Class

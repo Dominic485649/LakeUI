@@ -24,18 +24,35 @@ Partial Class Form_ModernPanel
     Private Sub InitializeComponent()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form_ModernPanel))
         ModernPanel1 = New ModernPanel()
-        Panel4 = New Panel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
+        Panel4 = New ModernPanel()
+        Panel4.BackColor1 = Color.Transparent
+        Panel4.BackColor = Color.Transparent
+        Panel4.BorderSize = 0
         ModernPanel5 = New ModernPanel()
         Label8 = New JustEmptyControl()
         ModernPanel4 = New ModernPanel()
-        Label7 = New Label()
-        Panel3 = New Panel()
+        Label7 = New HtmlColorLabel()
+        Label7.BackColor = Color.Transparent
+        Panel3 = New ModernPanel()
+        Panel3.BackColor1 = Color.Transparent
+        Panel3.BackColor = Color.Transparent
+        Panel3.BorderSize = 0
         ModernPanel3 = New ModernPanel()
-        Label5 = New Label()
-        Panel2 = New Panel()
+        Label5 = New HtmlColorLabel()
+        Label5.BackColor = Color.Transparent
+        Panel2 = New ModernPanel()
+        Panel2.BackColor1 = Color.Transparent
+        Panel2.BackColor = Color.Transparent
+        Panel2.BorderSize = 0
         ModernPanel2 = New ModernPanel()
-        Label6 = New Label()
-        Panel1 = New Panel()
+        Label6 = New HtmlColorLabel()
+        Label6.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -43,7 +60,8 @@ Partial Class Form_ModernPanel
         ModernButton2 = New ModernButton()
         Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel4.SuspendLayout()
         Panel3.SuspendLayout()
@@ -333,8 +351,8 @@ Partial Class Form_ModernPanel
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents Label6 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Label6 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -342,15 +360,15 @@ Partial Class Form_ModernPanel
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label1 As Label
-    Friend WithEvents Panel3 As Panel
-    Friend WithEvents Label5 As Label
-    Friend WithEvents Panel2 As Panel
+    Friend WithEvents Label1 As HtmlColorLabel
+    Friend WithEvents Panel3 As ModernPanel
+    Friend WithEvents Label5 As HtmlColorLabel
+    Friend WithEvents Panel2 As ModernPanel
     Friend WithEvents ModernPanel3 As ModernPanel
     Friend WithEvents ModernPanel2 As ModernPanel
-    Friend WithEvents Panel4 As Panel
+    Friend WithEvents Panel4 As ModernPanel
     Friend WithEvents ModernPanel4 As ModernPanel
-    Friend WithEvents Label7 As Label
+    Friend WithEvents Label7 As HtmlColorLabel
     Friend WithEvents ModernPanel5 As ModernPanel
     Friend WithEvents Label8 As JustEmptyControl
 End Class

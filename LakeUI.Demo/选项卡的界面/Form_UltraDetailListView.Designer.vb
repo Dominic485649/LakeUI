@@ -68,9 +68,15 @@ Partial Class Form_UltraDetailListView
         Dim ListSubItem27 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
         Dim TextLine4 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
         ModernPanel1 = New ModernPanel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
         UltraDetailListView1 = New UltraDetailListView()
-        Label3 = New Label()
-        Panel1 = New Panel()
+        Label3 = New HtmlColorLabel()
+        Label3.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label5 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -78,7 +84,8 @@ Partial Class Form_UltraDetailListView
         ModernButton2 = New ModernButton()
         Label10 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label11 = New Label()
+        Label11 = New HtmlColorLabel()
+        Label11.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
@@ -366,8 +373,8 @@ Partial Class Form_UltraDetailListView
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents Label3 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Label3 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label5 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -375,6 +382,6 @@ Partial Class Form_UltraDetailListView
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label10 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label11 As Label
+    Friend WithEvents Label11 As HtmlColorLabel
     Friend WithEvents UltraDetailListView1 As UltraDetailListView
 End Class

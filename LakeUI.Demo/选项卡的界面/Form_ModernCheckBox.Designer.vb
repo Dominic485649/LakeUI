@@ -23,20 +23,29 @@ Partial Class Form_ModernCheckBox
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
         ModernCheckBox9 = New ModernCheckBox()
-        Label8 = New Label()
+        Label8 = New HtmlColorLabel()
+        Label8.BackColor = Color.Transparent
         ModernCheckBox8 = New ModernCheckBox()
         ModernCheckBox7 = New ModernCheckBox()
-        Label7 = New Label()
+        Label7 = New HtmlColorLabel()
+        Label7.BackColor = Color.Transparent
         ModernCheckBox6 = New ModernCheckBox()
         ModernCheckBox5 = New ModernCheckBox()
         ModernCheckBox4 = New ModernCheckBox()
-        Label5 = New Label()
+        Label5 = New HtmlColorLabel()
+        Label5.BackColor = Color.Transparent
         ModernCheckBox3 = New ModernCheckBox()
         ModernCheckBox2 = New ModernCheckBox()
         ModernCheckBox1 = New ModernCheckBox()
-        Label6 = New Label()
-        Panel1 = New Panel()
+        Label6 = New HtmlColorLabel()
+        Label6.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -44,7 +53,8 @@ Partial Class Form_ModernCheckBox
         ModernButton2 = New ModernButton()
         Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
@@ -405,8 +415,8 @@ Partial Class Form_ModernCheckBox
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents Label6 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Label6 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -414,17 +424,17 @@ Partial Class Form_ModernCheckBox
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label1 As Label
+    Friend WithEvents Label1 As HtmlColorLabel
     Friend WithEvents ModernCheckBox1 As ModernCheckBox
     Friend WithEvents ModernCheckBox8 As ModernCheckBox
     Friend WithEvents ModernCheckBox7 As ModernCheckBox
-    Friend WithEvents Label7 As Label
+    Friend WithEvents Label7 As HtmlColorLabel
     Friend WithEvents ModernCheckBox6 As ModernCheckBox
     Friend WithEvents ModernCheckBox5 As ModernCheckBox
     Friend WithEvents ModernCheckBox4 As ModernCheckBox
-    Friend WithEvents Label5 As Label
+    Friend WithEvents Label5 As HtmlColorLabel
     Friend WithEvents ModernCheckBox3 As ModernCheckBox
     Friend WithEvents ModernCheckBox2 As ModernCheckBox
     Friend WithEvents ModernCheckBox9 As ModernCheckBox
-    Friend WithEvents Label8 As Label
+    Friend WithEvents Label8 As HtmlColorLabel
 End Class

@@ -18,16 +18,26 @@ Partial Class Form_EasyStatesPanel
     <System.Diagnostics.DebuggerStepThrough()>
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
         EasyStatesPanel1 = New EasyStatesPanel()
-        Label7 = New Label()
-        Panel2 = New Panel()
+        Label7 = New HtmlColorLabel()
+        Label7.BackColor = Color.Transparent
+        Panel2 = New ModernPanel()
+        Panel2.BackColor1 = Color.Transparent
+        Panel2.BackColor = Color.Transparent
+        Panel2.BorderSize = 0
         ModernButton7 = New ModernButton()
         Label9 = New JustEmptyControl()
         ModernButton6 = New ModernButton()
         Label8 = New JustEmptyControl()
         ModernButton5 = New ModernButton()
-        Label6 = New Label()
-        Panel1 = New Panel()
+        Label6 = New HtmlColorLabel()
+        Label6.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -35,7 +45,8 @@ Partial Class Form_EasyStatesPanel
         ModernButton2 = New ModernButton()
         Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel2.SuspendLayout()
         Panel1.SuspendLayout()
@@ -311,15 +322,15 @@ Partial Class Form_EasyStatesPanel
 
     Friend WithEvents ModernPanel1 As ModernPanel
     Friend WithEvents EasyStatesPanel1 As EasyStatesPanel
-    Friend WithEvents Label7 As Label
-    Friend WithEvents Panel2 As Panel
+    Friend WithEvents Label7 As HtmlColorLabel
+    Friend WithEvents Panel2 As ModernPanel
     Friend WithEvents ModernButton7 As ModernButton
     Friend WithEvents Label9 As JustEmptyControl
     Friend WithEvents ModernButton6 As ModernButton
     Friend WithEvents Label8 As JustEmptyControl
     Friend WithEvents ModernButton5 As ModernButton
-    Friend WithEvents Label6 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Label6 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -327,5 +338,5 @@ Partial Class Form_EasyStatesPanel
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label1 As Label
+    Friend WithEvents Label1 As HtmlColorLabel
 End Class

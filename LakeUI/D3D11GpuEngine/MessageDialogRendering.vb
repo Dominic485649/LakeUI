@@ -283,8 +283,11 @@ Friend Module MessageDialogRendering
                                 accentBorderColor As Color,
                                 accentHoverBackColor As Color,
                                 accentPressedBackColor As Color)
+        ' ModernButton renders BackColor as the fallback/base layer and BackColor1
+        ' as its actual state fill. Keep the WinForms layer transparent so a
+        ' BackgroundSource can be sampled without an opaque rectangle underneath.
+        DirectCast(button, Control).BackColor = Color.Transparent
         If IsGlassEnabled() Then
-            DirectCast(button, Control).BackColor = Color.Transparent
             button.BackgroundSource = surface
             button.BackColor1 = Color.FromArgb(40, 220, 220, 220)
             button.HoverBackColor1 = Color.FromArgb(60, 220, 220, 220)
@@ -297,7 +300,6 @@ Friend Module MessageDialogRendering
             Return
         End If
 
-        DirectCast(button, Control).BackColor = If(surface Is Nothing, Color.Transparent, surface.BackColor)
         button.BackgroundSource = Nothing
         button.BorderSize = 1
         If isDefault Then

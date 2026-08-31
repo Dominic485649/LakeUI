@@ -33,16 +33,24 @@ Partial Class Form_ListViewDirectReDraw
         Dim ListViewItem9 As ListViewItem = New ListViewItem("列表视图项")
         Dim ListViewItem10 As ListViewItem = New ListViewItem("列表视图项")
         ModernPanel1 = New ModernPanel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
         ListView1 = New ListView()
         ColumnHeader1 = New ColumnHeader()
         ColumnHeader2 = New ColumnHeader()
         ColumnHeader3 = New ColumnHeader()
-        Label3 = New Label()
+        Label3 = New HtmlColorLabel()
+        Label3.BackColor = Color.Transparent
         ModernTextBox2 = New ModernTextBox()
-        Label2 = New Label()
+        Label2 = New HtmlColorLabel()
+        Label2.BackColor = Color.Transparent
         ModernTextBox1 = New ModernTextBox()
-        Label6 = New Label()
-        Panel1 = New Panel()
+        Label6 = New HtmlColorLabel()
+        Label6.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -50,7 +58,8 @@ Partial Class Form_ListViewDirectReDraw
         ModernButton2 = New ModernButton()
         Label10 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label11 = New Label()
+        Label11 = New HtmlColorLabel()
+        Label11.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
@@ -320,12 +329,12 @@ Partial Class Form_ListViewDirectReDraw
     Friend WithEvents ColumnHeader1 As ColumnHeader
     Friend WithEvents ColumnHeader2 As ColumnHeader
     Friend WithEvents ColumnHeader3 As ColumnHeader
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As HtmlColorLabel
     Friend WithEvents ModernTextBox2 As ModernTextBox
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As HtmlColorLabel
     Friend WithEvents ModernTextBox1 As ModernTextBox
-    Friend WithEvents Label6 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Label6 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -333,5 +342,5 @@ Partial Class Form_ListViewDirectReDraw
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label10 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label11 As Label
+    Friend WithEvents Label11 As HtmlColorLabel
 End Class

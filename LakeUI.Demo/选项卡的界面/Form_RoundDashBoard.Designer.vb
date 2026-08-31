@@ -23,20 +23,37 @@ Partial Class Form_RoundDashBoard
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
-        Label8 = New Label()
-        Panel7 = New Panel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
+        Label8 = New HtmlColorLabel()
+        Label8.BackColor = Color.Transparent
+        Panel7 = New ModernPanel()
+        Panel7.BackColor1 = Color.Transparent
+        Panel7.BackColor = Color.Transparent
+        Panel7.BorderSize = 0
         ModernButton6 = New ModernButton()
         Label11 = New JustEmptyControl()
         ModernButton5 = New ModernButton()
-        Panel4 = New Panel()
+        Panel4 = New ModernPanel()
+        Panel4.BackColor1 = Color.Transparent
+        Panel4.BackColor = Color.Transparent
+        Panel4.BorderSize = 0
         RoundDashBoard3 = New RoundDashBoard()
-        Label7 = New Label()
-        Panel2 = New Panel()
+        Label7 = New HtmlColorLabel()
+        Label7.BackColor = Color.Transparent
+        Panel2 = New ModernPanel()
+        Panel2.BackColor1 = Color.Transparent
+        Panel2.BackColor = Color.Transparent
+        Panel2.BorderSize = 0
         RoundDashBoard2 = New RoundDashBoard()
         Label9 = New JustEmptyControl()
         RoundDashBoard1 = New RoundDashBoard()
-        Label6 = New Label()
-        Panel1 = New Panel()
+        Label6 = New HtmlColorLabel()
+        Label6.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -44,7 +61,8 @@ Partial Class Form_RoundDashBoard
         ModernButton2 = New ModernButton()
         Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel7.SuspendLayout()
         Panel4.SuspendLayout()
@@ -367,11 +385,11 @@ Partial Class Form_RoundDashBoard
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents Panel4 As Panel
-    Friend WithEvents Label7 As Label
-    Friend WithEvents Panel2 As Panel
-    Friend WithEvents Label6 As Label
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Panel4 As ModernPanel
+    Friend WithEvents Label7 As HtmlColorLabel
+    Friend WithEvents Panel2 As ModernPanel
+    Friend WithEvents Label6 As HtmlColorLabel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -379,14 +397,14 @@ Partial Class Form_RoundDashBoard
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label1 As Label
+    Friend WithEvents Label1 As HtmlColorLabel
     Friend WithEvents RoundDashBoard1 As RoundDashBoard
-    Friend WithEvents Panel7 As Panel
+    Friend WithEvents Panel7 As ModernPanel
     Friend WithEvents ModernButton6 As ModernButton
     Friend WithEvents Label11 As JustEmptyControl
     Friend WithEvents ModernButton5 As ModernButton
     Friend WithEvents RoundDashBoard3 As RoundDashBoard
-    Friend WithEvents Label8 As Label
+    Friend WithEvents Label8 As HtmlColorLabel
     Friend WithEvents RoundDashBoard2 As RoundDashBoard
     Friend WithEvents Label9 As JustEmptyControl
 End Class

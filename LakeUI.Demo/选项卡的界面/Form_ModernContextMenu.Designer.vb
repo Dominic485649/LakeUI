@@ -29,8 +29,14 @@ Partial Class Form_ModernContextMenu
         Dim ModernMenuItem4 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Dim ModernMenuItem5 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         ModernPanel1 = New ModernPanel()
-        Label5 = New Label()
-        Panel1 = New Panel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
+        Label5 = New HtmlColorLabel()
+        Label5.BackColor = Color.Transparent
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -38,7 +44,8 @@ Partial Class Form_ModernContextMenu
         ModernButton2 = New ModernButton()
         Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         ModernContextMenu1 = New ModernContextMenu()
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
@@ -249,7 +256,7 @@ Partial Class Form_ModernContextMenu
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -257,7 +264,7 @@ Partial Class Form_ModernContextMenu
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label1 As Label
-    Friend WithEvents Label5 As Label
+    Friend WithEvents Label1 As HtmlColorLabel
+    Friend WithEvents Label5 As HtmlColorLabel
     Friend WithEvents ModernContextMenu1 As ModernContextMenu
 End Class

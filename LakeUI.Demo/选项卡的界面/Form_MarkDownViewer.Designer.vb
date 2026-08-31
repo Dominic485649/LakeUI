@@ -23,11 +23,16 @@ Partial Class Form_MarkDownViewer
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
         MarkDownViewer1 = New MarkDownViewer()
         JustEmptyControl2 = New JustEmptyControl()
         ModernTextBox1 = New ModernTextBox()
         JustEmptyControl1 = New JustEmptyControl()
-        Panel1 = New Panel()
+        Panel1 = New ModernPanel()
+        Panel1.BackColor1 = Color.Transparent
+        Panel1.BackColor = Color.Transparent
+        Panel1.BorderSize = 0
         ModernButton4 = New ModernButton()
         Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
@@ -35,7 +40,8 @@ Partial Class Form_MarkDownViewer
         ModernButton2 = New ModernButton()
         Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
-        Label1 = New Label()
+        Label1 = New HtmlColorLabel()
+        Label1.BackColor = Color.Transparent
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
@@ -246,7 +252,7 @@ Partial Class Form_MarkDownViewer
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents Panel1 As Panel
+    Friend WithEvents Panel1 As ModernPanel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
@@ -254,7 +260,7 @@ Partial Class Form_MarkDownViewer
     Friend WithEvents ModernButton2 As ModernButton
     Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
-    Friend WithEvents Label1 As Label
+    Friend WithEvents Label1 As HtmlColorLabel
     Friend WithEvents MarkDownViewer1 As MarkDownViewer
     Friend WithEvents JustEmptyControl1 As JustEmptyControl
     Friend WithEvents JustEmptyControl2 As JustEmptyControl

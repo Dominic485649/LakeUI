@@ -709,12 +709,15 @@ Public Class ModernContextMenu
                 展开关闭起始高度 = 1.0F
                 展开关闭目标高度 = 最终高度
                 展开关闭当前高度 = 展开关闭起始高度
-                设置展开关闭裁剪高度(1)
-                Me.Show()
                 展开关闭动画中 = True
                 正在关闭动画 = False
-                展开关闭秒表.Restart()
-                启动展开关闭驱动()
+                设置展开关闭裁剪高度(1)
+                Me.Show()
+                ' Show 可能触发失活回调并重入关闭；不要覆盖已经建立的关闭状态。
+                If Not 正在关闭动画 AndAlso Not 正在关闭 AndAlso Not IsDisposed Then
+                    展开关闭秒表.Restart()
+                    启动展开关闭驱动()
+                End If
             Else
                 Me.Show()
             End If
@@ -742,12 +745,14 @@ Public Class ModernContextMenu
                 展开关闭起始高度 = 1.0F
                 展开关闭目标高度 = 最终高度
                 展开关闭当前高度 = 展开关闭起始高度
-                设置展开关闭裁剪高度(1)
-                Me.Show()
                 展开关闭动画中 = True
                 正在关闭动画 = False
-                展开关闭秒表.Restart()
-                启动展开关闭驱动()
+                设置展开关闭裁剪高度(1)
+                Me.Show()
+                If Not 正在关闭动画 AndAlso Not 正在关闭 AndAlso Not IsDisposed Then
+                    展开关闭秒表.Restart()
+                    启动展开关闭驱动()
+                End If
             Else
                 Me.Show()
             End If

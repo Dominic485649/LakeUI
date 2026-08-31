@@ -23,6 +23,8 @@ Partial Class Form基本信息
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
+        ModernPanel1.BackColor1 = Color.Transparent
+        ModernPanel1.BackColor = Color.Transparent
         MarkDownViewer1 = New MarkDownViewer()
         ModernPanel1.SuspendLayout()
         SuspendLayout()
