@@ -35,10 +35,22 @@ static class Program
         VerifyBackdropImageSnapshotSurvivesCallerDispose();
         VerifyHdrImageMappingUsesCachedLookup();
         VerifyV5ProbeApi();
+        VerifyWindowCornerModeContract();
         VerifyOverlayConfirmationThenOwnerClosingDoesNotDeadlock();
         Console.WriteLine("LakeUI tests passed.");
     }
 
+    private static void VerifyWindowCornerModeContract()
+    {
+        using var window = new ThisIsYourWindow();
+        Assert(window.WindowCornerMode == DwmWindowStyle.CornerMode.Square,
+            "ThisIsYourWindow must preserve the historical square-corner default.");
+        window.WindowCornerMode = DwmWindowStyle.CornerMode.Round;
+        Assert(window.WindowCornerMode == DwmWindowStyle.CornerMode.Round,
+            "ThisIsYourWindow must expose a writable DWM corner preference.");
+        Assert(DwmWindowStyle.IsCornerModeSupported == OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000),
+            "Corner capability detection must match the Windows 11 build 22000 requirement.");
+    }
     private static void VerifyOverlayConfirmationThenOwnerClosingDoesNotDeadlock()
     {
         using var completed = new ManualResetEventSlim();

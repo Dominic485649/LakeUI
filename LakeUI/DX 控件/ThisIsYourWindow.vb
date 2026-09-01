@@ -826,7 +826,7 @@ Public Class ThisIsYourWindow
 
     Private Sub 应用Dwm窗口属性(hWnd As IntPtr, Optional disableTransitions As Boolean = False)
         Try
-            Dim pref As Integer = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_DONOTROUND
+            Dim pref As Integer = CInt(_窗口圆角模式)
             Dim unused1 = DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
             Dim colorNone As Integer = DWMWA_COLOR_NONE
             Dim unused2 = DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, colorNone, 4)
@@ -1862,6 +1862,30 @@ Public Class ThisIsYourWindow
         End Get
         Set(value As Boolean)
             _最大化时隐藏调整边框 = value
+        End Set
+    End Property
+
+#End Region
+
+#Region "属性 - 窗口外观"
+
+    Private _窗口圆角模式 As DwmWindowStyle.CornerMode = DwmWindowStyle.CornerMode.Square
+    ''' <summary>
+    ''' 窗口圆角首选项。默认 Square 以保持既有行为；Windows 11 Build 22000+ 支持 Default、Round 和 RoundSmall。
+    ''' 全屏期间始终使用直角，退出全屏后恢复当前设置。
+    ''' </summary>
+    <Category("LakeUI"), Description("窗口圆角首选项。Windows 11 Build 22000+ 生效；全屏期间始终为直角。"), DefaultValue(GetType(DwmWindowStyle.CornerMode), "Square")>
+    Public Property WindowCornerMode As DwmWindowStyle.CornerMode
+        Get
+            Return _窗口圆角模式
+        End Get
+        Set(value As DwmWindowStyle.CornerMode)
+            If _窗口圆角模式 = value Then Return
+            _窗口圆角模式 = value
+            For Each s In _forms.Values
+                If s Is Nothing OrElse s.IsFullScreen OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Continue For
+                应用Dwm窗口属性(s.HostForm.Handle)
+            Next
         End Set
     End Property
 

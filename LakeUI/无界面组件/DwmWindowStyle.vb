@@ -44,6 +44,12 @@ Public Class DwmWindowStyle
         ''' </summary>
         RoundSmall = 3
     End Enum
+    ''' <summary>当前系统是否支持 DWM 窗口圆角首选项（Windows 11 Build 22000+）。</summary>
+    Public Shared ReadOnly Property IsCornerModeSupported As Boolean
+        Get
+            Return OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)
+        End Get
+    End Property
 
     ''' <summary>
     ''' 设置目标窗口的亮色/暗色模式。设置为 True 时窗口标题栏和边框使用暗色主题，False 时使用亮色主题。
