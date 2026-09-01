@@ -35,10 +35,47 @@ static class Program
         VerifyBackdropImageSnapshotSurvivesCallerDispose();
         VerifyHdrImageMappingUsesCachedLookup();
         VerifyV5ProbeApi();
+        VerifyWindowCornerModeContract();
         VerifyOverlayConfirmationThenOwnerClosingDoesNotDeadlock();
         Console.WriteLine("LakeUI tests passed.");
     }
 
+    private static void VerifyWindowCornerModeContract()
+    {
+        using var window = new ThisIsYourWindow();
+        Assert(window.WindowCornerMode == DwmWindowStyle.CornerMode.Square,
+            "ThisIsYourWindow must preserve the historical square-corner default.");
+        window.WindowCornerMode = DwmWindowStyle.CornerMode.Round;
+        Assert(window.WindowCornerMode == DwmWindowStyle.CornerMode.Round,
+            "ThisIsYourWindow must expose a writable DWM corner preference.");
+        Assert(DwmWindowStyle.IsCornerModeSupported == OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000),
+            "Corner capability detection must match the Windows 11 build 22000 requirement.");
+        Assert(DwmWindowStyle.GetCornerRadiusLogical(DwmWindowStyle.CornerMode.Round) == 8.0F,
+            "Round must use the Windows 11 8px logical radius.");
+        Assert(DwmWindowStyle.GetCornerRadiusLogical(DwmWindowStyle.CornerMode.RoundSmall) == 4.0F,
+            "RoundSmall must use the Windows 11 4px logical radius.");
+        Assert(DwmWindowStyle.GetCornerRadiusLogical(DwmWindowStyle.CornerMode.Square) == 0.0F,
+            "Square must not apply rounded GPU geometry.");
+        Assert(ExOverlayMsgBoxTheme.CreateLight().ButtonBorderRadius == 4,
+            "Overlay message buttons must use the Windows 11 4px control radius.");
+
+        var originalPopupMode = DwmWindowStyle.PopupCornerMode;
+        try
+        {
+            Assert(originalPopupMode == DwmWindowStyle.CornerMode.Round,
+                "LakeUI popup windows must preserve the historical rounded default.");
+            DwmWindowStyle.PopupCornerMode = DwmWindowStyle.CornerMode.Square;
+            Assert(!DwmWindowStyle.PopupUsesRoundedCorners,
+                "Square popup mode must disable rounded popup geometry.");
+            DwmWindowStyle.PopupCornerMode = DwmWindowStyle.CornerMode.RoundSmall;
+            Assert(DwmWindowStyle.PopupUsesRoundedCorners,
+                "RoundSmall popup mode must be treated as rounded popup geometry.");
+        }
+        finally
+        {
+            DwmWindowStyle.PopupCornerMode = originalPopupMode;
+        }
+    }
     private static void VerifyOverlayConfirmationThenOwnerClosingDoesNotDeadlock()
     {
         using var completed = new ManualResetEventSlim();

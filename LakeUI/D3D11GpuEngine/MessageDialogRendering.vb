@@ -395,13 +395,17 @@ Friend Module MessageDialogRendering
         If context Is Nothing OrElse color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim half = width / 2.0F
         rect.Inflate(-half, -half)
+        If rect.Width <= 0.0F OrElse rect.Height <= 0.0F Then Return
         If radius <= 0.0F Then
             context.DrawRectangle(rect, color, width)
             Return
         End If
 
+        ' radius 表示最终外轮廓半径。DrawRoundedRectangle 的半径作用在 stroke 中心线，
+        ' 因此中心线半径必须扣除 half stroke，才能保证 1px/2px/更粗边框的外缘都与 DWM 裁切一致。
+        Dim strokeRadius As Single = Math.Max(0.0F, radius - half)
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
-        context.DrawRoundedRectangle(rect, radius, brush, width)
+        context.DrawRoundedRectangle(rect, strokeRadius, brush, width)
     End Sub
 
     Public Sub DrawText(context As D3D_PaintContext,

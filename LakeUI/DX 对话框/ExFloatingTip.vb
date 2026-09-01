@@ -153,10 +153,6 @@ Friend Class ExFloatingTipForm
     Private Shared Function DwmExtendFrameIntoClientArea(hwnd As IntPtr, ByRef margins As MARGINS) As Integer
     End Function
 
-    <DllImport("dwmapi.dll")>
-    Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attr As Integer, ByRef attrValue As Integer, attrSize As Integer) As Integer
-    End Function
-
     <StructLayout(LayoutKind.Sequential)>
     Private Structure MARGINS
         Public left As Integer
@@ -165,8 +161,6 @@ Friend Class ExFloatingTipForm
         Public bottom As Integer
     End Structure
 
-    Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
-    Private Const DWMWCP_ROUND As Integer = 2
 
     Private Const WM_LBUTTONDOWN As Integer = &H201
     Private Const WM_RBUTTONDOWN As Integer = &H204
@@ -361,10 +355,10 @@ Friend Class ExFloatingTipForm
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
         Try
-            Dim m As New MARGINS With {.left = 1, .right = 1, .top = 1, .bottom = 1}
+            Dim frameInset = If(DwmWindowStyle.PopupUsesRoundedCorners, 1, 0)
+            Dim m As New MARGINS With {.left = frameInset, .right = frameInset, .top = frameInset, .bottom = frameInset}
             Dim unused0 = DwmExtendFrameIntoClientArea(Me.Handle, m)
-            Dim pref As Integer = DWMWCP_ROUND
-            Dim unused1 = DwmSetWindowAttribute(Me.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
+            DwmWindowStyle.ApplyPopupWindowStyle(Me.Handle)
         Catch
         End Try
     End Sub
@@ -456,9 +450,12 @@ Friend Class ExFloatingTipForm
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+        Dim windowRadius As Single = If(DwmWindowStyle.IsCornerModeSupported,
+                                        DwmWindowStyle.PopupCornerRadiusLogical * SC,
+                                        0.0F)
         Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds, 毛玻璃)
         If Not glass Then
-            MessageDialogRendering.FillRectangle(context, bounds, 主题.CardBackColor)
+            MessageDialogRendering.FillRoundedRectangle(context, bounds, 主题.CardBackColor, windowRadius)
         End If
 
         Dim textRect As New RectangleF(
@@ -470,9 +467,8 @@ Friend Class ExFloatingTipForm
             主题.MessageForeColor, 文本标志, SC)
 
         If 卡片边框宽度 > 0 Then
-            MessageDialogRendering.DrawInsetRectangle(context,
-                New RectangleF(0, 0, ClientSize.Width, ClientSize.Height),
-                主题.CardBorderColor, 卡片边框宽度)
+            MessageDialogRendering.DrawRoundedRectangle(context,
+                bounds, 主题.CardBorderColor, CSng(卡片边框宽度), windowRadius)
         End If
     End Sub
 

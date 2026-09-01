@@ -28,6 +28,14 @@ Public Class PopupForm
         StartPosition = FormStartPosition.Manual
     End Sub
 
+    Protected Overrides Sub OnHandleCreated(e As EventArgs)
+        MyBase.OnHandleCreated(e)
+        Try
+            DwmWindowStyle.ApplyPopupWindowStyle(Handle)
+        Catch
+        End Try
+    End Sub
+
     Protected Overrides ReadOnly Property CreateParams As CreateParams
         Get
             Dim cp = MyBase.CreateParams
