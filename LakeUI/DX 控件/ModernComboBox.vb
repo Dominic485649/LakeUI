@@ -2335,21 +2335,24 @@ Public Class ModernComboBox
             Return _backdrop.Draw(context, New RectangleF(0, 0, w, h))
         End Function
 
+        Private Function 获取下拉窗口圆角半径(w As Integer, h As Integer) As Single
+            If Not DwmWindowStyle.IsCornerModeSupported Then Return 0.0F
+            Dim radius = DwmWindowStyle.PopupCornerRadiusLogical * _owner.DpiScale()
+            Return Math.Max(0.0F, Math.Min(radius, Math.Min(w, h) / 2.0F))
+        End Function
+
         Private Sub DrawDropDownBackground_GPU(context As D3D_PaintContext, backColor As Color, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
-            If fillBackground Then context.FillRectangle(New RectangleF(0, 0, w, h), backColor)
-            If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then DrawDropDownBorder_GPU(context, w, h, bw)
+            Dim bounds As New RectangleF(0, 0, w, h)
+            Dim radius = 获取下拉窗口圆角半径(w, h)
+            If fillBackground Then MessageDialogRendering.FillRoundedRectangle(context, bounds, backColor, radius)
+            If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then DrawDropDownBorder_GPU(context, w, h, bw, radius)
         End Sub
 
-        Private Sub DrawDropDownBorder_GPU(context As D3D_PaintContext, w As Integer, h As Integer, bw As Integer)
+        Private Sub DrawDropDownBorder_GPU(context As D3D_PaintContext, w As Integer, h As Integer, bw As Integer, radius As Single)
             Dim border As Integer = Math.Min(bw, Math.Min(w, h))
             If border <= 0 Then Return
-            context.FillRectangle(New RectangleF(0, 0, w, border), _owner.下拉边框颜色)
-            If h > border Then context.FillRectangle(New RectangleF(0, h - border, w, border), _owner.下拉边框颜色)
-            Dim middleHeight As Integer = h - border * 2
-            If middleHeight > 0 Then
-                context.FillRectangle(New RectangleF(0, border, border, middleHeight), _owner.下拉边框颜色)
-                If w > border Then context.FillRectangle(New RectangleF(w - border, border, border, middleHeight), _owner.下拉边框颜色)
-            End If
+            MessageDialogRendering.DrawRoundedRectangle(context,
+                New RectangleF(0, 0, w, h), _owner.下拉边框颜色, CSng(border), radius)
         End Sub
 
         Private Function 获取悬停焦点颜色() As Color

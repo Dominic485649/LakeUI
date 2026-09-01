@@ -94,18 +94,18 @@ Public Class ExOverlayMsgBoxTheme
     Public Shared Function CreateLight() As ExOverlayMsgBoxTheme
         Return New ExOverlayMsgBoxTheme With {
             .OverlayBackColor = Color.Black,
-            .OverlayOpacity = 140,
-            .CardBackColor = Color.FromArgb(249, 249, 249),
-            .CardBorderColor = Color.FromArgb(200, 200, 200),
+            .OverlayOpacity = 48,
+            .CardBackColor = Color.White,
+            .CardBorderColor = Color.FromArgb(168, 168, 168),
             .CardBorderRadius = 8,
-            .TitleForeColor = Color.FromArgb(20, 20, 20),
-            .MessageForeColor = Color.FromArgb(30, 30, 30),
-            .ButtonAreaBackColor = Color.FromArgb(238, 238, 238),
-            .ButtonBackColor = Color.FromArgb(253, 253, 253),
-            .ButtonForeColor = Color.FromArgb(30, 30, 30),
-            .ButtonBorderColor = Color.FromArgb(200, 200, 200),
-            .ButtonHoverBackColor = Color.FromArgb(240, 240, 240),
-            .ButtonPressedBackColor = Color.FromArgb(218, 218, 218),
+            .TitleForeColor = Color.FromArgb(24, 24, 24),
+            .MessageForeColor = Color.FromArgb(32, 32, 32),
+            .ButtonAreaBackColor = Color.FromArgb(246, 246, 246),
+            .ButtonBackColor = Color.White,
+            .ButtonForeColor = Color.FromArgb(32, 32, 32),
+            .ButtonBorderColor = Color.FromArgb(190, 190, 190),
+            .ButtonHoverBackColor = Color.FromArgb(242, 242, 242),
+            .ButtonPressedBackColor = Color.FromArgb(225, 225, 225),
             .AccentButtonBackColor = Color.FromArgb(0, 95, 184),
             .AccentButtonForeColor = Color.White,
             .AccentButtonHoverBackColor = Color.FromArgb(30, 115, 200),
@@ -517,10 +517,6 @@ Friend Class ExOverlayBackdropForm
     Inherits Form
     Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_IGpuDirtyRegionCoverage, V5_IGpuPresentationSource
 
-    <DllImport("dwmapi.dll")>
-    Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attr As Integer, ByRef attrValue As Integer, attrSize As Integer) As Integer
-    End Function
-
     <DllImport("user32.dll")>
     Private Shared Function SendMessage(hWnd As IntPtr, Msg As Integer, wParam As IntPtr, lParam As IntPtr) As IntPtr
     End Function
@@ -537,8 +533,6 @@ Friend Class ExOverlayBackdropForm
     Private Shared Function SetWindowDisplayAffinity(hWnd As IntPtr, dwAffinity As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
-    Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
-    Private Const DWMWCP_DONOTROUND As Integer = 1
     Private Const WM_NCLBUTTONDOWN As Integer = &HA1
     Private Const HT_CAPTION As Integer = &H2
     Private Const WDA_NONE As Integer = &H0
@@ -598,8 +592,7 @@ Friend Class ExOverlayBackdropForm
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
         Try
-            Dim pref As Integer = DWMWCP_DONOTROUND
-            Dim unused = DwmSetWindowAttribute(Me.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
+            DwmWindowStyle.ApplyPopupWindowStyle(Me.Handle)
         Catch
         End Try
     End Sub
@@ -720,10 +713,6 @@ Friend Class ExOverlayMsgBoxHostForm
 
 #Region "Win32"
 
-    <DllImport("dwmapi.dll")>
-    Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attr As Integer, ByRef attrValue As Integer, attrSize As Integer) As Integer
-    End Function
-
     <DllImport("user32.dll", CharSet:=CharSet.Unicode, SetLastError:=True)>
     Private Shared Function LoadString(hInstance As IntPtr, uID As UInteger, lpBuffer As System.Text.StringBuilder, nBufferMax As Integer) As Integer
     End Function
@@ -744,8 +733,6 @@ Friend Class ExOverlayMsgBoxHostForm
     Private Shared Function EnableWindow(hWnd As IntPtr, bEnable As Boolean) As Boolean
     End Function
 
-    Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
-    Private Const DWMWCP_DONOTROUND As Integer = 1
     Private Const WM_NCLBUTTONDOWN As Integer = &HA1
     Private Const HT_CAPTION As Integer = &H2
 
@@ -1023,7 +1010,7 @@ Friend Class ExOverlayMsgBoxHostForm
             .Size = New Size(actualButtonWidth, 按钮高度),
             .Font = buttonFont,
             .Tag = tag,
-            .BorderRadius = 0,
+            .BorderRadius = 主题.ButtonBorderRadius,
             .AnimationDuration = 150,
             .RippleEnabled = False,
             .TabStop = True,
@@ -1093,8 +1080,7 @@ Friend Class ExOverlayMsgBoxHostForm
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
         Try
-            Dim pref As Integer = DWMWCP_DONOTROUND
-            Dim unused = DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
+            DwmWindowStyle.ApplyPopupWindowStyle(Handle)
         Catch
         End Try
     End Sub
@@ -1125,10 +1111,16 @@ Friend Class ExOverlayMsgBoxHostForm
         context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), Color.FromArgb(255, 主题.OverlayBackColor))
 
         Dim cardRect As RectangleF = 卡片区域
+        Dim cardRadius As Single = If(DwmWindowStyle.PopupUsesRoundedCorners,
+                                      Math.Max(0.0F, 主题.CardBorderRadius * SC),
+                                      0.0F)
         Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect, 毛玻璃)
         If Not glass Then
-            MessageDialogRendering.FillRectangle(context, cardRect, 主题.CardBackColor)
-            MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
+            MessageDialogRendering.FillRoundedRectangle(context, cardRect, 主题.CardBackColor, cardRadius)
+            Dim cardClip = context.GetRoundedRectangleGeometry(cardRect, cardRadius)
+            Using context.PushGeometryClip(cardClip, cardRect)
+                MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
+            End Using
         End If
 
         MessageDialogRendering.DrawText(context, 标题文本, 标题字体, 标题区域, 主题.TitleForeColor,
@@ -1136,7 +1128,7 @@ Friend Class ExOverlayMsgBoxHostForm
         MessageDialogRendering.DrawText(context, 消息文本, 消息字体, 消息区域, 主题.MessageForeColor,
             TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
         MessageDialogRendering.DrawImage(context, 消息图标位图, 图标区域)
-        MessageDialogRendering.DrawRectangle(context, cardRect, 主题.CardBorderColor, 1.0F)
+        MessageDialogRendering.DrawRoundedRectangle(context, cardRect, 主题.CardBorderColor, 1.0F, cardRadius)
     End Sub
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
@@ -1300,10 +1292,6 @@ Friend Class ExOverlayMsgBoxForm
 
 #Region "Win32"
 
-    <DllImport("dwmapi.dll")>
-    Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attr As Integer, ByRef attrValue As Integer, attrSize As Integer) As Integer
-    End Function
-
     <DllImport("user32.dll", CharSet:=CharSet.Unicode, SetLastError:=True)>
     Private Shared Function LoadString(hInstance As IntPtr, uID As UInteger, lpBuffer As System.Text.StringBuilder, nBufferMax As Integer) As Integer
     End Function
@@ -1324,8 +1312,6 @@ Friend Class ExOverlayMsgBoxForm
     Private Shared Function EnableWindow(hWnd As IntPtr, bEnable As Boolean) As Boolean
     End Function
 
-    Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
-    Private Const DWMWCP_DONOTROUND As Integer = 1
     Private Const WM_NCLBUTTONDOWN As Integer = &HA1
     Private Const HT_CAPTION As Integer = &H2
 
@@ -1542,8 +1528,7 @@ Friend Class ExOverlayMsgBoxForm
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
         Try
-            Dim pref As Integer = DWMWCP_DONOTROUND
-            Dim unused = DwmSetWindowAttribute(Me.Handle, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
+            DwmWindowStyle.ApplyPopupWindowStyle(Me.Handle)
         Catch
         End Try
     End Sub
@@ -1685,7 +1670,7 @@ Friend Class ExOverlayMsgBoxForm
             .Size = New Size(实际按钮宽度, 按钮高度),
             .Font = 按钮字体,
             .Tag = tag,
-            .BorderRadius = 0,
+            .BorderRadius = 主题.ButtonBorderRadius,
             .BorderSize = 1,
             .AnimationDuration = 150,
             .RippleEnabled = False,
@@ -1827,10 +1812,16 @@ Friend Class ExOverlayMsgBoxForm
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim cardRect As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+        Dim cardRadius As Single = If(DwmWindowStyle.IsCornerModeSupported,
+                                      DwmWindowStyle.PopupCornerRadiusLogical * SC,
+                                      0.0F)
         Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect, 毛玻璃)
         If Not glass Then
-            MessageDialogRendering.FillRectangle(context, cardRect, 主题.CardBackColor)
-            MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
+            MessageDialogRendering.FillRoundedRectangle(context, cardRect, 主题.CardBackColor, cardRadius)
+            Dim cardClip = context.GetRoundedRectangleGeometry(cardRect, cardRadius)
+            Using context.PushGeometryClip(cardClip, cardRect)
+                MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
+            End Using
         End If
 
         MessageDialogRendering.DrawText(context, 标题标签.Text, 标题字体, 标题区域, 主题.TitleForeColor,
@@ -1838,9 +1829,8 @@ Friend Class ExOverlayMsgBoxForm
         MessageDialogRendering.DrawText(context, 消息标签.Text, 消息字体, 消息区域, 主题.MessageForeColor,
             TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
         MessageDialogRendering.DrawImage(context, 消息图标位图, 图标区域)
-        MessageDialogRendering.DrawRectangle(context,
-            New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
-            主题.CardBorderColor, 1.0F)
+        MessageDialogRendering.DrawRoundedRectangle(context,
+            cardRect, 主题.CardBorderColor, 1.0F, cardRadius)
     End Sub
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds

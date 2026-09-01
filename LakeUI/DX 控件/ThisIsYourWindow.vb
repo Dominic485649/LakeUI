@@ -824,12 +824,26 @@ Public Class ThisIsYourWindow
         End If
     End Sub
 
+    Private Function 当前使用圆角模式(s As PerFormState) As Boolean
+        If s Is Nothing OrElse s.IsFullScreen OrElse s.HostForm Is Nothing Then Return False
+        ' Windows 11 在最大化/贴靠状态下不会绘制窗口圆角；GPU 自绘边框必须遵循同一规则。
+        If 窗口当前已最大化(s.HostForm) Then Return False
+        Return DwmWindowStyle.IsCornerModeSupported AndAlso
+               DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式) > 0.0F
+    End Function
+
+    Private Sub 应用Dwm边框颜色(hWnd As IntPtr)
+        ' LakeUI 自己绘制窗口边框。DWM 的独立边框与 GPU 自绘边框同时存在时，
+        ' 圆角像素会出现双重抗锯齿/颜色泄漏，因此统一禁止系统边框。
+        Dim borderValue As Integer = DWMWA_COLOR_NONE
+        Dim unused = DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, borderValue, 4)
+    End Sub
+
     Private Sub 应用Dwm窗口属性(hWnd As IntPtr, Optional disableTransitions As Boolean = False)
         Try
-            Dim pref As Integer = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_DONOTROUND
+            Dim pref As Integer = CInt(_窗口圆角模式)
             Dim unused1 = DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
-            Dim colorNone As Integer = DWMWA_COLOR_NONE
-            Dim unused2 = DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, colorNone, 4)
+            应用Dwm边框颜色(hWnd)
             Dim margins As MARGINS
             If _阴影模式 = ShadowModeEnum.DWM Then margins.Bottom = 1
             Dim unused3 = DwmExtendFrameIntoClientArea(hWnd, margins)
@@ -1191,7 +1205,12 @@ Public Class ThisIsYourWindow
         End Get
         Set(value As Color)
             If _边框颜色 = value Then Return
-            _边框颜色 = value : 通知重绘()
+            _边框颜色 = value
+            For Each s In _forms.Values
+                If s?.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated OrElse s.IsFullScreen Then Continue For
+                Try : 应用Dwm边框颜色(s.HostForm.Handle) : Catch : End Try
+            Next
+            通知重绘()
         End Set
     End Property
 
@@ -1204,7 +1223,12 @@ Public Class ThisIsYourWindow
         End Get
         Set(value As Color)
             If _边框失焦颜色 = value Then Return
-            _边框失焦颜色 = value : 通知重绘()
+            _边框失焦颜色 = value
+            For Each s In _forms.Values
+                If s?.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated OrElse s.IsFullScreen Then Continue For
+                Try : 应用Dwm边框颜色(s.HostForm.Handle) : Catch : End Try
+            Next
+            通知重绘()
         End Set
     End Property
 
@@ -1220,9 +1244,15 @@ Public Class ThisIsYourWindow
             If _边框厚度 = value Then Return
             _边框厚度 = value
             For Each s In _forms.Values
+                If s Is Nothing Then Continue For
                 s.LayoutSignature = -1
+                s.ChromeOverlayRegionsSignature = Long.MinValue
                 RecalculateButtonBounds(s)
                 更新窗口内边距(s)
+                If s.HostForm IsNot Nothing AndAlso Not s.HostForm.IsDisposed AndAlso s.HostForm.IsHandleCreated AndAlso Not s.IsFullScreen Then
+                    Try : 应用Dwm边框颜色(s.HostForm.Handle) : Catch : End Try
+                    更新ChromeOverlays(s)
+                End If
             Next
             通知重绘()
         End Set
@@ -1867,6 +1897,37 @@ Public Class ThisIsYourWindow
 
 #End Region
 
+#Region "属性 - 窗口外观"
+
+    Private _窗口圆角模式 As DwmWindowStyle.CornerMode = DwmWindowStyle.CornerMode.Square
+    ''' <summary>
+    ''' 窗口圆角首选项。默认 Square 以保持既有行为；Windows 11 Build 22000+ 支持 Default、Round 和 RoundSmall。
+    ''' 全屏期间始终使用直角，退出全屏后恢复当前设置。
+    ''' </summary>
+    <Category("LakeUI"), Description("窗口圆角首选项。Windows 11 Build 22000+ 生效；全屏期间始终为直角。"), DefaultValue(GetType(DwmWindowStyle.CornerMode), "Square")>
+    Public Property WindowCornerMode As DwmWindowStyle.CornerMode
+        Get
+            Return _窗口圆角模式
+        End Get
+        Set(value As DwmWindowStyle.CornerMode)
+            If _窗口圆角模式 = value Then Return
+            _窗口圆角模式 = value
+            For Each s In _forms.Values
+                If s Is Nothing Then Continue For
+                s.LayoutSignature = -1
+                s.ChromeOverlayRegionsSignature = Long.MinValue
+                If s.IsFullScreen OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Continue For
+                应用Dwm窗口属性(s.HostForm.Handle)
+                If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
+                更新阴影(s)
+                更新ChromeOverlays(s)
+            Next
+            通知重绘()
+        End Set
+    End Property
+
+#End Region
+
 #Region "属性 - 高级 (排除区域)"
 
     Private _标题栏排除区域 As New List(Of Rectangle)
@@ -2080,7 +2141,12 @@ Public Class ThisIsYourWindow
         If _分层阴影自动颜色 AndAlso 毛玻璃当前启用(s) Then
             shadowColor = s.Renderer.DeriveShadowColor(_分层阴影颜色)
         End If
-        s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, shadowColor, _分层阴影不透明度, If(forceFullRender, False, s.IsInSizeMove))
+        Dim logicalCornerRadius As Single = If(DwmWindowStyle.IsCornerModeSupported,
+                                                DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式),
+                                                0.0F)
+        Dim shadowCornerRadius As Integer = Math.Max(0, CInt(Math.Round(缩放逻辑尺寸(s.HostForm, logicalCornerRadius))))
+        s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, shadowColor, _分层阴影不透明度,
+                                  shadowCornerRadius, If(forceFullRender, False, s.IsInSizeMove))
         s.ShadowForm.SyncVirtualDesktopWithHost()
         s.ShadowForm.PlaceBehind(s.HostForm.Handle)
         s.ShadowForm.SetDesktopAwareVisible(True)
@@ -3276,6 +3342,19 @@ Public Class ThisIsYourWindow
         Dim bdr As Integer = Math.Min(scaledBorderSize, Math.Max(0, Math.Min(w, h)))
         If bdr <= 0 Then Return
 
+        ' DWM 只负责最终窗口裁切，边框始终由 LakeUI 自绘；这样边框与内容使用同一套 GPU 几何，
+        ' 不会在圆角处叠加系统边框的第二层抗锯齿。
+        If 当前使用圆角模式(s) Then
+            Dim logicalRadius As Single = DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式)
+            Dim outerRadius As Single = Math.Max(1.0F, CSng(缩放逻辑尺寸(s.HostForm, logicalRadius)))
+            Dim stroke As Single = CSng(bdr)
+            Dim inset As Single = stroke / 2.0F
+            Dim strokeRadius As Single = Math.Max(0.0F, outerRadius - inset)
+            Dim rect As New RectangleF(inset, inset, Math.Max(0.0F, w - stroke), Math.Max(0.0F, h - stroke))
+            If rect.Width > 0 AndAlso rect.Height > 0 Then context.DrawRoundedRectangle(rect, strokeRadius, bdrColor, stroke)
+            Return
+        End If
+
         context.FillRectangle(New RectangleF(0, 0, w, Math.Min(bdr, h)), bdrColor)
         If h > bdr Then context.FillRectangle(New RectangleF(0, h - bdr, w, bdr), bdrColor)
 
@@ -3618,8 +3697,9 @@ Public Class ThisIsYourWindow
         If s Is Nothing OrElse Not s.ChromeOverlayActive OrElse s.ChromeOverlays Is Nothing Then Return
         D3D_RenderDiagnostics.V5ChromeOverlayLayoutUpdated(s.IsFullScreen)
         Dim fullSize = 获取真实客户区尺寸(s.HostForm)
+        Dim scaledBorder = Math.Max(0, 取缩放边框厚度(s.HostForm))
         Dim regionSignature As Long = HashCode.Combine(fullSize.Width, fullSize.Height, s.LayoutSignature, s.IsFullScreen)
-        regionSignature = HashCode.Combine(regionSignature, s.FullScreenCaptionVisible)
+        regionSignature = HashCode.Combine(regionSignature, s.FullScreenCaptionVisible, scaledBorder, CInt(_窗口圆角模式))
         Dim regions As List(Of Rectangle)
         If s.ChromeOverlayRegions IsNot Nothing AndAlso s.ChromeOverlayRegionsSignature = regionSignature Then
             regions = s.ChromeOverlayRegions
@@ -3628,8 +3708,19 @@ Public Class ThisIsYourWindow
             s.ChromeOverlayRegions = regions
             s.ChromeOverlayRegionsSignature = regionSignature
         End If
-        Dim count = Math.Min(regions.Count, s.ChromeOverlays.Count)
         Dim changedOverlays As List(Of ChromeOverlayControl) = Nothing
+        While s.ChromeOverlays.Count < regions.Count
+            Dim region = regions(s.ChromeOverlays.Count)
+            Dim overlay As New ChromeOverlayControl(Me, s.HostForm, region.Location, region.Size, fullSize)
+            s.HostForm.Controls.Add(overlay)
+            确保ChromeOverlay位于内容之后(overlay)
+            s.ChromeOverlays.Add(overlay)
+            If changedOverlays Is Nothing Then changedOverlays = New List(Of ChromeOverlayControl)()
+            changedOverlays.Add(overlay)
+            D3D_RenderDiagnostics.V5ChromeOverlayCreated(1)
+        End While
+
+        Dim count = Math.Min(regions.Count, s.ChromeOverlays.Count)
         For i As Integer = 0 To count - 1
             Dim region = regions(i)
             Dim nextVisible = s.HostForm.Visible AndAlso region.Width > 0 AndAlso region.Height > 0
@@ -3706,11 +3797,24 @@ Public Class ThisIsYourWindow
 
         Dim bdr = Math.Min(Math.Max(0, 取缩放边框厚度(s.HostForm)), Math.Min(w, h) \ 2)
         If bdr <= 0 Then Return regions
-        regions.Add(New Rectangle(0, 0, w, bdr))
-        regions.Add(New Rectangle(0, Math.Max(0, h - bdr), w, bdr))
-        If h > bdr * 2 Then
-            regions.Add(New Rectangle(0, bdr, bdr, h - bdr * 2))
-            regions.Add(New Rectangle(Math.Max(0, w - bdr), bdr, bdr, h - bdr * 2))
+
+        Dim edgeBand As Integer = bdr
+        If 当前使用圆角模式(s) Then
+            Dim logicalRadius = DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式)
+            Dim outerRadius = Math.Max(1.0F, CSng(缩放逻辑尺寸(s.HostForm, logicalRadius)))
+            ' 顶/底圆角必须完整落在同一个 opaque swap-chain 带内；额外保留 half-stroke 与 1px AA 余量。
+            edgeBand = Math.Max(edgeBand, CInt(Math.Ceiling(outerRadius + bdr / 2.0F + 1.0F)))
+        End If
+        edgeBand = Math.Min(edgeBand, Math.Min(w, h))
+
+        ' 标题栏之外，圆角模式只使用“整条顶部带 + 整条底部带 + 两侧中段”。
+        ' 四个圆弧分别完整位于顶部或底部同一个 surface 中，不跨 HWND 拼接；侧边不与角带重叠。
+        regions.Add(New Rectangle(0, 0, w, edgeBand))
+        regions.Add(New Rectangle(0, Math.Max(0, h - edgeBand), w, edgeBand))
+        Dim sideHeight = Math.Max(0, h - edgeBand * 2)
+        If sideHeight > 0 Then
+            regions.Add(New Rectangle(0, edgeBand, bdr, sideHeight))
+            regions.Add(New Rectangle(Math.Max(0, w - bdr), edgeBand, bdr, sideHeight))
         End If
         Return regions
     End Function
@@ -4202,6 +4306,9 @@ Public Class ThisIsYourWindow
                     Dim activated As Boolean = (CInt(m.WParam.ToInt64() And &HFFFF) <> 0)
                     _state.Activated = activated
                     _owner.触发激活状态改变(activated, _state.HostForm)
+                    If Not _state.IsFullScreen AndAlso _state.HostForm IsNot Nothing AndAlso _state.HostForm.IsHandleCreated Then
+                        Try : _owner.应用Dwm边框颜色(_state.HostForm.Handle) : Catch : End Try
+                    End If
                     If _owner._标题文字颜色 <> _owner._标题文字失焦颜色 Then
                         _owner.InvalidateTitleText(_state, True)
                     End If

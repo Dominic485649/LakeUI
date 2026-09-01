@@ -147,6 +147,7 @@ Friend Class ShadowWindow
 #End Region
 
     Private _lastHostSize As Size
+    Private _lastCornerRadius As Integer = -1
     Private _globalAlpha As Byte = 255
     Private _desktopVisibilityTimer As Timer
     Private _desiredVisible As Boolean = False
@@ -374,7 +375,8 @@ Friend Class ShadowWindow
     ''' <summary>
     ''' 更新阴影的位置与大小。如果宿主窗口尺寸未变则仅移动，否则重新渲染。
     ''' </summary>
-    Public Sub UpdateShadow(hostBounds As Rectangle, depth As Integer, color As Color, opacity As Byte, Optional moveOnly As Boolean = False)
+    Public Sub UpdateShadow(hostBounds As Rectangle, depth As Integer, color As Color, opacity As Byte,
+                            Optional cornerRadius As Integer = 0, Optional moveOnly As Boolean = False)
         If depth <= 0 Then
             SetDesktopAwareVisible(False)
             Return
@@ -386,6 +388,7 @@ Friend Class ShadowWindow
 
         Dim shadowX As Integer = hostBounds.X - depth
         Dim shadowY As Integer = hostBounds.Y - depth
+        cornerRadius = Math.Max(0, Math.Min(cornerRadius, Math.Min(hostBounds.Width, hostBounds.Height) \ 2))
 
         If moveOnly Then
             MoveToPosition(shadowX, shadowY)
@@ -393,12 +396,13 @@ Friend Class ShadowWindow
         End If
 
         Dim hostSize As New Size(hostBounds.Width, hostBounds.Height)
-        Dim needsRender As Boolean = (hostSize <> _lastHostSize)
+        Dim needsRender As Boolean = (hostSize <> _lastHostSize) OrElse cornerRadius <> _lastCornerRadius
 
         If needsRender Then
             _lastHostSize = hostSize
+            _lastCornerRadius = cornerRadius
             Using bmp As New Bitmap(totalW, totalH, PixelFormat.Format32bppPArgb)
-                RenderShadowBitmap(bmp, depth, hostSize.Width, hostSize.Height, color, opacity)
+                RenderShadowBitmap(bmp, depth, hostSize.Width, hostSize.Height, cornerRadius, color, opacity)
                 ApplyLayeredBitmap(bmp, New Point(shadowX, shadowY), New Size(totalW, totalH))
             End Using
         Else
@@ -421,6 +425,7 @@ Friend Class ShadowWindow
     ''' <summary>强制下次 UpdateShadow 时重新渲染。</summary>
     Public Sub ForceReset()
         _lastHostSize = Size.Empty
+        _lastCornerRadius = -1
     End Sub
 
     Protected Overrides Sub Dispose(disposing As Boolean)
@@ -452,7 +457,7 @@ Friend Class ShadowWindow
 
     ''' <summary>渲染阴影位图（预乘 Alpha）。</summary>
     Private Shared Sub RenderShadowBitmap(bmp As Bitmap, depth As Integer,
-                                    hostW As Integer, hostH As Integer,
+                                    hostW As Integer, hostH As Integer, cornerRadius As Integer,
                                     color As Color, maxAlpha As Byte)
         Dim rect As New Rectangle(0, 0, bmp.Width, bmp.Height)
         Dim data = bmp.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb)
@@ -468,29 +473,27 @@ Friend Class ShadowWindow
         Dim cb As Byte = color.B
         Dim invDepth As Double = 1.0 / depth
 
+        ' 与宿主的 DWM/GPU 圆角使用同一个半径。通过 rounded-box SDF 求每个阴影像素
+        ' 到宿主轮廓的距离，避免 DWM 已裁圆但 Layer 阴影仍按矩形宿主计算而露出方角。
+        Dim radius As Double = Math.Max(0, Math.Min(cornerRadius, Math.Min(hostW, hostH) / 2.0R))
+        Dim halfW As Double = hostW / 2.0R
+        Dim halfH As Double = hostH / 2.0R
+        Dim innerHalfW As Double = Math.Max(0.0R, halfW - radius)
+        Dim innerHalfH As Double = Math.Max(0.0R, halfH - radius)
+
         For y As Integer = 0 To h - 1
             Dim rowOff As Integer = y * stride
+            Dim py As Double = (y - depth + 0.5R) - halfH
             For x As Integer = 0 To w - 1
-                Dim dx As Integer = 0
-                Dim dy As Integer = 0
+                Dim px As Double = (x - depth + 0.5R) - halfW
+                Dim qx As Double = Math.Abs(px) - innerHalfW
+                Dim qy As Double = Math.Abs(py) - innerHalfH
+                Dim ox As Double = Math.Max(qx, 0.0R)
+                Dim oy As Double = Math.Max(qy, 0.0R)
+                Dim dist As Double = Math.Sqrt(ox * ox + oy * oy) + Math.Min(Math.Max(qx, qy), 0.0R) - radius
 
-                If x < depth Then
-                    dx = depth - x
-                ElseIf x >= depth + hostW Then
-                    dx = x - (depth + hostW) + 1
-                End If
-
-                If y < depth Then
-                    dy = depth - y
-                ElseIf y >= depth + hostH Then
-                    dy = y - (depth + hostH) + 1
-                End If
-
-                ' 窗口内部区域保持透明
-                If dx = 0 AndAlso dy = 0 Then Continue For
-
-                Dim dist As Double = Math.Sqrt(dx * dx + dy * dy)
-                If dist >= depth Then Continue For
+                ' SDF <= 0 表示位于宿主圆角矩形内部，保持完全透明。
+                If dist <= 0.0R OrElse dist >= depth Then Continue For
 
                 Dim t As Double = (depth - dist) * invDepth
                 Dim alpha As Integer = CInt(maxAlpha * t * t)
