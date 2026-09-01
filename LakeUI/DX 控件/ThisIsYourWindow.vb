@@ -70,6 +70,7 @@ Public Class ThisIsYourWindow
     Private Const DWMWA_TRANSITIONS_FORCEDISABLED As Integer = 3
     Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
     Private Const DWMWA_BORDER_COLOR As Integer = 34
+    Private Const DWMWA_VISIBLE_FRAME_BORDER_THICKNESS As Integer = 37
     Private Const DWMWA_COLOR_NONE As Integer = &HFFFFFFFE
 
     Private Enum DWM_WINDOW_CORNER_PREFERENCE
@@ -107,6 +108,11 @@ Public Class ThisIsYourWindow
     <DllImport("dwmapi.dll")>
     Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, dwAttribute As Integer,
                                                    ByRef pvAttribute As Integer, cbAttribute As Integer) As Integer
+    End Function
+
+    <DllImport("dwmapi.dll")>
+    Private Shared Function DwmGetWindowAttribute(hwnd As IntPtr, dwAttribute As Integer,
+                                                   ByRef pvAttribute As UInteger, cbAttribute As Integer) As Integer
     End Function
 
     <DllImport("dwmapi.dll")>
@@ -833,11 +839,30 @@ Public Class ThisIsYourWindow
     End Function
 
     Private Sub 应用Dwm边框颜色(hWnd As IntPtr)
-        ' LakeUI 自己绘制窗口边框。DWM 的独立边框与 GPU 自绘边框同时存在时，
-        ' 圆角像素会出现双重抗锯齿/颜色泄漏，因此统一禁止系统边框。
+        If hWnd = IntPtr.Zero Then Return
+
+        ' Windows 11 圆角模式下由 DWM 负责最外层边框和角部抗锯齿。
+        ' 这样四个角只经过一次系统裁切/合成，不再依赖多个不透明 child-HWND overlay 拼接圆弧。
+        Dim state As PerFormState = Nothing
+        _forms.TryGetValue(hWnd, state)
+        Dim useDwmBorder As Boolean = state IsNot Nothing AndAlso 当前使用圆角模式(state) AndAlso _边框厚度 > 0
+        Dim active As Boolean = If(state IsNot Nothing, state.Activated, GetForegroundWindow() = hWnd)
+        Dim color As Color = If(active, _边框颜色, _边框失焦颜色)
+
         Dim borderValue As Integer = DWMWA_COLOR_NONE
+        If useDwmBorder AndAlso color.A > 0 Then
+            ' COLORREF = 0x00BBGGRR；DWM 边框不支持独立 alpha，因此只传 RGB。
+            borderValue = color.R Or (CInt(color.G) << 8) Or (CInt(color.B) << 16)
+        End If
         Dim unused = DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, borderValue, 4)
     End Sub
+
+    Private Shared Function 获取Dwm可见边框厚度(hWnd As IntPtr) As Integer
+        If hWnd = IntPtr.Zero OrElse Not DwmWindowStyle.IsCornerModeSupported Then Return 0
+        Dim thickness As UInteger = 0UI
+        If DwmGetWindowAttribute(hWnd, DWMWA_VISIBLE_FRAME_BORDER_THICKNESS, thickness, 4) <> 0 Then Return 0
+        Return CInt(Math.Min(thickness, CUInt(Integer.MaxValue)))
+    End Function
 
     Private Sub 应用Dwm窗口属性(hWnd As IntPtr, Optional disableTransitions As Boolean = False)
         Try
@@ -3342,16 +3367,28 @@ Public Class ThisIsYourWindow
         Dim bdr As Integer = Math.Min(scaledBorderSize, Math.Max(0, Math.Min(w, h)))
         If bdr <= 0 Then Return
 
-        ' DWM 只负责最终窗口裁切，边框始终由 LakeUI 自绘；这样边框与内容使用同一套 GPU 几何，
-        ' 不会在圆角处叠加系统边框的第二层抗锯齿。
         If 当前使用圆角模式(s) Then
+            ' DWM 已绘制最外层圆角边框。LakeUI 只补足用户要求的额外内侧厚度，
+            ' 并在角部留给 DWM 独占，避免再次跨多个 opaque child HWND 拼接抗锯齿圆弧。
+            Dim nativeBorder = Math.Min(bdr, 获取Dwm可见边框厚度(s.HostForm.Handle))
+            Dim extra = Math.Max(0, bdr - nativeBorder)
+            If extra <= 0 Then Return
+
             Dim logicalRadius As Single = DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式)
-            Dim outerRadius As Single = Math.Max(1.0F, CSng(缩放逻辑尺寸(s.HostForm, logicalRadius)))
-            Dim stroke As Single = CSng(bdr)
-            Dim inset As Single = stroke / 2.0F
-            Dim strokeRadius As Single = Math.Max(0.0F, outerRadius - inset)
-            Dim rect As New RectangleF(inset, inset, Math.Max(0.0F, w - stroke), Math.Max(0.0F, h - stroke))
-            If rect.Width > 0 AndAlso rect.Height > 0 Then context.DrawRoundedRectangle(rect, strokeRadius, bdrColor, stroke)
+            Dim cornerInset As Integer = Math.Min(Math.Min(w, h) \ 2,
+                                                  Math.Max(nativeBorder + extra,
+                                                           CInt(Math.Ceiling(缩放逻辑尺寸(s.HostForm, logicalRadius)))))
+            Dim horizontalWidth = Math.Max(0, w - cornerInset * 2)
+            If horizontalWidth > 0 Then
+                context.FillRectangle(New RectangleF(cornerInset, nativeBorder, horizontalWidth, extra), bdrColor)
+                context.FillRectangle(New RectangleF(cornerInset, Math.Max(0, h - nativeBorder - extra), horizontalWidth, extra), bdrColor)
+            End If
+
+            Dim verticalHeight = Math.Max(0, h - cornerInset * 2)
+            If verticalHeight > 0 Then
+                context.FillRectangle(New RectangleF(nativeBorder, cornerInset, extra, verticalHeight), bdrColor)
+                context.FillRectangle(New RectangleF(Math.Max(0, w - nativeBorder - extra), cornerInset, extra, verticalHeight), bdrColor)
+            End If
             Return
         End If
 
@@ -3798,17 +3835,9 @@ Public Class ThisIsYourWindow
         Dim bdr = Math.Min(Math.Max(0, 取缩放边框厚度(s.HostForm)), Math.Min(w, h) \ 2)
         If bdr <= 0 Then Return regions
 
-        Dim edgeBand As Integer = bdr
-        If 当前使用圆角模式(s) Then
-            Dim logicalRadius = DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式)
-            Dim outerRadius = Math.Max(1.0F, CSng(缩放逻辑尺寸(s.HostForm, logicalRadius)))
-            ' 顶/底圆角必须完整落在同一个 opaque swap-chain 带内；额外保留 half-stroke 与 1px AA 余量。
-            edgeBand = Math.Max(edgeBand, CInt(Math.Ceiling(outerRadius + bdr / 2.0F + 1.0F)))
-        End If
-        edgeBand = Math.Min(edgeBand, Math.Min(w, h))
-
-        ' 标题栏之外，圆角模式只使用“整条顶部带 + 整条底部带 + 两侧中段”。
-        ' 四个圆弧分别完整位于顶部或底部同一个 surface 中，不跨 HWND 拼接；侧边不与角带重叠。
+        ' 圆角最外沿由 DWM 绘制，opaque Chrome overlay 不再承担角部圆弧。
+        ' 因此四条 overlay 只需要占用真实内容 padding 的边框厚度，不会再被 Dock=Fill 内容遮住。
+        Dim edgeBand As Integer = Math.Min(bdr, Math.Min(w, h))
         regions.Add(New Rectangle(0, 0, w, edgeBand))
         regions.Add(New Rectangle(0, Math.Max(0, h - edgeBand), w, edgeBand))
         Dim sideHeight = Math.Max(0, h - edgeBand * 2)
@@ -3901,6 +3930,9 @@ Public Class ThisIsYourWindow
         ' ── 第四步：注册拦截器 ──
         s.Interceptor = New WindowMessageInterceptor(Me, s)
         _forms(hWnd) = s
+        ' 初次 DWM 属性应用发生在状态注册之前；状态可用后再应用一次边框颜色，
+        ' 让圆角模式从第一帧开始就由 DWM 绘制正确的激活态外边框。
+        应用Dwm边框颜色(hWnd)
         注册键盘过滤器()
         SyncLock _attachedFormsLock
             _attachedForms(targetForm) = Me
@@ -4279,6 +4311,11 @@ Public Class ThisIsYourWindow
                     End If
                     MyBase.WndProc(m)
                     If _owner._阴影模式 <> ShadowModeEnum.DWM Then _owner.切换动画样式(_state.HostForm.Handle, False)
+                    ' 最大化/还原会改变 DWM 是否实际采用圆角；同步切换系统外边框，
+                    ' 避免最大化时与 LakeUI 的直角 GPU 边框叠加。
+                    If _state.HostForm IsNot Nothing AndAlso _state.HostForm.IsHandleCreated AndAlso Not _state.IsFullScreen Then
+                        Try : _owner.应用Dwm边框颜色(_state.HostForm.Handle) : Catch : End Try
+                    End If
                     Dim currentClientSize As Size = ThisIsYourWindow.获取真实客户区尺寸(_state.HostForm)
                     Dim clientSizeChanged As Boolean = (currentClientSize <> _state.LastClientSize)
                     Dim minimizedNow As Boolean = (_state.HostForm IsNot Nothing AndAlso

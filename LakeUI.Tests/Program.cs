@@ -78,8 +78,8 @@ static class Program
                    edgeBands.Any(control => control.Bottom == form.ClientSize.Height),
                 $"BorderSize {borderSize} must render the top and bottom borders in full-width overlays.");
             if (DwmWindowStyle.IsCornerModeSupported)
-                Assert(edgeBands.All(control => control.Height > borderSize),
-                    $"BorderSize {borderSize} must keep each rounded corner arc inside one edge overlay.");
+                Assert(edgeBands.All(control => control.Height == borderSize),
+                    $"BorderSize {borderSize} rounded mode must keep opaque edge overlays inside the real content padding; DWM owns the outer corner arcs.");
         }
 
         var originalPopupMode = DwmWindowStyle.PopupCornerMode;
