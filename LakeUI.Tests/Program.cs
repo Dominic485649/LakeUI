@@ -59,6 +59,29 @@ static class Program
         Assert(ExOverlayMsgBoxTheme.CreateLight().ButtonBorderRadius == 4,
             "Overlay message buttons must use the Windows 11 4px control radius.");
 
+        using var form = new Form { ClientSize = new Size(640, 480) };
+        _ = form.Handle;
+        window.BorderSize = 0;
+        window.Attach(form);
+        Assert(form.Controls.OfType<ThisIsYourWindow.ChromeOverlayControl>().Count() == 1,
+            "A borderless attached window must keep only its caption overlay.");
+
+        foreach (var borderSize in new[] { 1, 2 })
+        {
+            window.BorderSize = borderSize;
+            var overlays = form.Controls.OfType<ThisIsYourWindow.ChromeOverlayControl>().ToArray();
+            Assert(overlays.Length == 5,
+                $"BorderSize {borderSize} must keep the caption plus four border overlays.");
+            var edgeBands = overlays.Where(control => control.Width == form.ClientSize.Width).ToArray();
+            Assert(edgeBands.Length == 2 &&
+                   edgeBands.Any(control => control.Top == 0) &&
+                   edgeBands.Any(control => control.Bottom == form.ClientSize.Height),
+                $"BorderSize {borderSize} must render the top and bottom borders in full-width overlays.");
+            if (DwmWindowStyle.IsCornerModeSupported)
+                Assert(edgeBands.All(control => control.Height > borderSize),
+                    $"BorderSize {borderSize} must keep each rounded corner arc inside one edge overlay.");
+        }
+
         var originalPopupMode = DwmWindowStyle.PopupCornerMode;
         try
         {

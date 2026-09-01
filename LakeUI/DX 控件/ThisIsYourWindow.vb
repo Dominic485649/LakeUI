@@ -1244,11 +1244,14 @@ Public Class ThisIsYourWindow
             If _边框厚度 = value Then Return
             _边框厚度 = value
             For Each s In _forms.Values
+                If s Is Nothing Then Continue For
                 s.LayoutSignature = -1
+                s.ChromeOverlayRegionsSignature = Long.MinValue
                 RecalculateButtonBounds(s)
                 更新窗口内边距(s)
-                If s?.HostForm IsNot Nothing AndAlso Not s.HostForm.IsDisposed AndAlso s.HostForm.IsHandleCreated AndAlso Not s.IsFullScreen Then
+                If s.HostForm IsNot Nothing AndAlso Not s.HostForm.IsDisposed AndAlso s.HostForm.IsHandleCreated AndAlso Not s.IsFullScreen Then
                     Try : 应用Dwm边框颜色(s.HostForm.Handle) : Catch : End Try
+                    更新ChromeOverlays(s)
                 End If
             Next
             通知重绘()
@@ -1910,10 +1913,14 @@ Public Class ThisIsYourWindow
             If _窗口圆角模式 = value Then Return
             _窗口圆角模式 = value
             For Each s In _forms.Values
-                If s Is Nothing OrElse s.IsFullScreen OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Continue For
+                If s Is Nothing Then Continue For
+                s.LayoutSignature = -1
+                s.ChromeOverlayRegionsSignature = Long.MinValue
+                If s.IsFullScreen OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Continue For
                 应用Dwm窗口属性(s.HostForm.Handle)
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
                 更新阴影(s)
+                更新ChromeOverlays(s)
             Next
             通知重绘()
         End Set
@@ -3690,8 +3697,9 @@ Public Class ThisIsYourWindow
         If s Is Nothing OrElse Not s.ChromeOverlayActive OrElse s.ChromeOverlays Is Nothing Then Return
         D3D_RenderDiagnostics.V5ChromeOverlayLayoutUpdated(s.IsFullScreen)
         Dim fullSize = 获取真实客户区尺寸(s.HostForm)
+        Dim scaledBorder = Math.Max(0, 取缩放边框厚度(s.HostForm))
         Dim regionSignature As Long = HashCode.Combine(fullSize.Width, fullSize.Height, s.LayoutSignature, s.IsFullScreen)
-        regionSignature = HashCode.Combine(regionSignature, s.FullScreenCaptionVisible)
+        regionSignature = HashCode.Combine(regionSignature, s.FullScreenCaptionVisible, scaledBorder, CInt(_窗口圆角模式))
         Dim regions As List(Of Rectangle)
         If s.ChromeOverlayRegions IsNot Nothing AndAlso s.ChromeOverlayRegionsSignature = regionSignature Then
             regions = s.ChromeOverlayRegions
@@ -3700,8 +3708,19 @@ Public Class ThisIsYourWindow
             s.ChromeOverlayRegions = regions
             s.ChromeOverlayRegionsSignature = regionSignature
         End If
-        Dim count = Math.Min(regions.Count, s.ChromeOverlays.Count)
         Dim changedOverlays As List(Of ChromeOverlayControl) = Nothing
+        While s.ChromeOverlays.Count < regions.Count
+            Dim region = regions(s.ChromeOverlays.Count)
+            Dim overlay As New ChromeOverlayControl(Me, s.HostForm, region.Location, region.Size, fullSize)
+            s.HostForm.Controls.Add(overlay)
+            确保ChromeOverlay位于内容之后(overlay)
+            s.ChromeOverlays.Add(overlay)
+            If changedOverlays Is Nothing Then changedOverlays = New List(Of ChromeOverlayControl)()
+            changedOverlays.Add(overlay)
+            D3D_RenderDiagnostics.V5ChromeOverlayCreated(1)
+        End While
+
+        Dim count = Math.Min(regions.Count, s.ChromeOverlays.Count)
         For i As Integer = 0 To count - 1
             Dim region = regions(i)
             Dim nextVisible = s.HostForm.Visible AndAlso region.Width > 0 AndAlso region.Height > 0
@@ -3778,11 +3797,24 @@ Public Class ThisIsYourWindow
 
         Dim bdr = Math.Min(Math.Max(0, 取缩放边框厚度(s.HostForm)), Math.Min(w, h) \ 2)
         If bdr <= 0 Then Return regions
-        regions.Add(New Rectangle(0, 0, w, bdr))
-        regions.Add(New Rectangle(0, Math.Max(0, h - bdr), w, bdr))
-        If h > bdr * 2 Then
-            regions.Add(New Rectangle(0, bdr, bdr, h - bdr * 2))
-            regions.Add(New Rectangle(Math.Max(0, w - bdr), bdr, bdr, h - bdr * 2))
+
+        Dim edgeBand As Integer = bdr
+        If 当前使用圆角模式(s) Then
+            Dim logicalRadius = DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式)
+            Dim outerRadius = Math.Max(1.0F, CSng(缩放逻辑尺寸(s.HostForm, logicalRadius)))
+            ' 顶/底圆角必须完整落在同一个 opaque swap-chain 带内；额外保留 half-stroke 与 1px AA 余量。
+            edgeBand = Math.Max(edgeBand, CInt(Math.Ceiling(outerRadius + bdr / 2.0F + 1.0F)))
+        End If
+        edgeBand = Math.Min(edgeBand, Math.Min(w, h))
+
+        ' 标题栏之外，圆角模式只使用“整条顶部带 + 整条底部带 + 两侧中段”。
+        ' 四个圆弧分别完整位于顶部或底部同一个 surface 中，不跨 HWND 拼接；侧边不与角带重叠。
+        regions.Add(New Rectangle(0, 0, w, edgeBand))
+        regions.Add(New Rectangle(0, Math.Max(0, h - edgeBand), w, edgeBand))
+        Dim sideHeight = Math.Max(0, h - edgeBand * 2)
+        If sideHeight > 0 Then
+            regions.Add(New Rectangle(0, edgeBand, bdr, sideHeight))
+            regions.Add(New Rectangle(Math.Max(0, w - bdr), edgeBand, bdr, sideHeight))
         End If
         Return regions
     End Function
