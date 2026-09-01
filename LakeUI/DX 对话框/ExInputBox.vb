@@ -176,6 +176,17 @@ Public Module ExInputBoxModule
     End Function
 
     Private Function 显示(owner As IWin32Window, prompt As String, title As String, defaultResponse As String, xPos As Integer, yPos As Integer) As String
+        If TypeOf owner Is Control Then
+            Dim ownerControl = DirectCast(owner, Control)
+            If ownerControl.InvokeRequired Then
+                Try
+                    Return CStr(ownerControl.Invoke(New Func(Of String)(Function() 显示(owner, prompt, title, defaultResponse, xPos, yPos))))
+                Catch ex As InvalidOperationException
+                    Return String.Empty
+                End Try
+            End If
+        End If
+
         Dim 提示文本 As String = If(prompt, String.Empty)
         Dim 标题文本 As String = If(String.IsNullOrEmpty(title), Application.ProductName, title)
         Dim 默认值 As String = If(defaultResponse, String.Empty)

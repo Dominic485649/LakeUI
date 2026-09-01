@@ -191,6 +191,14 @@ Public Module ExFloatingBoxModule
     ' ──────────────────── 内部实现 ────────────────────
 
     Private Function 显示标准(anchor As Control, prompt As Object, buttons As Integer, title As Object) As MsgBoxResult
+        If anchor IsNot Nothing AndAlso anchor.InvokeRequired Then
+            Try
+                Return CType(anchor.Invoke(New Func(Of MsgBoxResult)(Function() 显示标准(anchor, prompt, buttons, title))), MsgBoxResult)
+            Catch ex As InvalidOperationException
+                Return MsgBoxResult.Cancel
+            End Try
+        End If
+
         Dim frm As New ExFloatingBoxForm(
             If(prompt?.ToString(), String.Empty), buttons,
             title?.ToString(),
@@ -200,6 +208,14 @@ Public Module ExFloatingBoxModule
     End Function
 
     Private Function 显示自定义(anchor As Control, prompt As Object, buttonTexts() As String, title As Object, icon As MsgBoxStyle, defaultButton As Integer) As Integer
+        If anchor IsNot Nothing AndAlso anchor.InvokeRequired Then
+            Try
+                Return CInt(anchor.Invoke(New Func(Of Integer)(Function() 显示自定义(anchor, prompt, buttonTexts, title, icon, defaultButton))))
+            Catch ex As InvalidOperationException
+                Return -1
+            End Try
+        End If
+
         Dim frm As New ExFloatingBoxForm(
             If(prompt?.ToString(), String.Empty), buttonTexts,
             title?.ToString(),

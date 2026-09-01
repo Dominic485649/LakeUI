@@ -35,7 +35,75 @@ static class Program
         VerifyBackdropImageSnapshotSurvivesCallerDispose();
         VerifyHdrImageMappingUsesCachedLookup();
         VerifyV5ProbeApi();
+        VerifyOverlayConfirmationThenOwnerClosingDoesNotDeadlock();
         Console.WriteLine("LakeUI tests passed.");
+    }
+
+    private static void VerifyOverlayConfirmationThenOwnerClosingDoesNotDeadlock()
+    {
+        using var completed = new ManualResetEventSlim();
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            using var form = new Form { Width = 320, Height = 200, StartPosition = FormStartPosition.CenterScreen };
+            form.Shown += (_, _) =>
+            {
+                var timer = new System.Windows.Forms.Timer { Interval = 100 };
+                timer.Tick += (_, _) =>
+                {
+                    timer.Stop();
+                    timer.Dispose();
+                    foreach (Form openForm in Application.OpenForms)
+                    {
+                        if (openForm.GetType().Name != "ExOverlayMsgBoxForm") continue;
+
+                        foreach (Control control in openForm.Controls)
+                        {
+                            if (control is ModernButton button)
+                            {
+                                typeof(ModernButton).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                    .Invoke(button, new object[] { EventArgs.Empty });
+                                return;
+                            }
+                        }
+                    }
+
+                    throw new InvalidOperationException("Overlay message-box card was not shown.");
+                };
+                timer.Start();
+
+                var worker = new Thread(() =>
+                {
+                    try
+                    {
+                        LakeUI.ExOverlayMsgBoxModule.ExOverlayMsgBox(form, "owner closing regression", (int)MessageBoxButtons.OK);
+                        completed.Set();
+                        form.BeginInvoke((System.Windows.Forms.MethodInvoker)(() => form.Close()));
+                    }
+                    catch (Exception ex)
+                    {
+                        failure = ex;
+                        completed.Set();
+                    }
+                })
+                {
+                    IsBackground = true
+                };
+                worker.Start();
+            };
+            Application.Run(form);
+        })
+        {
+            IsBackground = true
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert(completed.Wait(TimeSpan.FromSeconds(5)),
+            "Overlay message box must return after its confirmation button closes the card from a background caller.");
+        Assert(thread.Join(TimeSpan.FromSeconds(2)),
+            "Overlay background-caller regression thread did not terminate.");
+        Assert(failure is null, $"Overlay background-caller regression failed: {failure}");
     }
 
     private static void VerifyVisibleControlSurfaceProtection()

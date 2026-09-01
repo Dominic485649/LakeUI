@@ -200,6 +200,17 @@ Public Module ExMsgBoxModule
         Optional Icon As Integer = 0,
         Optional Owner As IWin32Window = Nothing
     ) As Integer
+        If TypeOf Owner Is Control Then
+            Dim ownerControl = DirectCast(Owner, Control)
+            If ownerControl.InvokeRequired Then
+                Try
+                    Return CInt(ownerControl.Invoke(New Func(Of Integer)(Function() ExMsgBox(Prompt, CustomButtons, Title, Icon, Owner))))
+                Catch ex As InvalidOperationException
+                    Return -1
+                End Try
+            End If
+        End If
+
         Dim 消息文本 As String = If(Prompt?.ToString(), String.Empty)
         Dim 标题文本 As String = If(Title?.ToString(), Application.ProductName)
         Dim 列表 = CustomButtons?.ToList()
@@ -216,6 +227,17 @@ Public Module ExMsgBoxModule
     End Function
 
     Private Function 显示(owner As IWin32Window, prompt As Object, buttons As Integer, title As Object) As MsgBoxResult
+        If TypeOf owner Is Control Then
+            Dim ownerControl = DirectCast(owner, Control)
+            If ownerControl.InvokeRequired Then
+                Try
+                    Return CType(ownerControl.Invoke(New Func(Of MsgBoxResult)(Function() 显示(owner, prompt, buttons, title))), MsgBoxResult)
+                Catch ex As InvalidOperationException
+                    Return MsgBoxResult.Cancel
+                End Try
+            End If
+        End If
+
         Dim 消息文本 As String = If(prompt?.ToString(), String.Empty)
         Dim 标题文本 As String = If(title?.ToString(), Application.ProductName)
         Using frm As New ExMsgBoxForm(消息文本, buttons, 标题文本, ExMsgBoxTheme.Current, owner)

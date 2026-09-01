@@ -561,7 +561,10 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         ' 句柄销毁可能因换父级、显式重建、DPI 或样式变化而恢复。
         ' 保留逻辑依赖，使 HandleCreated 能够重建来源并唤醒所有映射消费者。
         ReleaseSurfaceResources(控件)
-        MarkDirty(控件)
+        ' 不要在 WmDestroy 事件中同步请求消费者重绘：控件 Dispose 通常会
+        ' 先释放字体/图片等渲染资源，再进入基类句柄销毁流程，此时重绘会
+        ' 读取已经释放的 Image。HandleCreated/Disposed 会负责后续唤醒或移除。
+        MarkDirty(控件, requestConsumers:=False)
     End Sub
 
     Private Shared Sub 控件已释放(发送者 As Object, 事件参数 As EventArgs)

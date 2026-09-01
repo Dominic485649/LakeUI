@@ -204,6 +204,17 @@ Public Module ExOverlayMsgBoxModule
     End Sub
 
     Private Function 显示(owner As IWin32Window, prompt As Object, buttons As Integer, title As Object) As MsgBoxResult
+        If TypeOf owner Is Control Then
+            Dim ownerControl = DirectCast(owner, Control)
+            If ownerControl.InvokeRequired Then
+                Try
+                    Return CType(ownerControl.Invoke(New Func(Of MsgBoxResult)(Function() 显示(owner, prompt, buttons, title))), MsgBoxResult)
+                Catch ex As InvalidOperationException
+                    Return MsgBoxResult.Cancel
+                End Try
+            End If
+        End If
+
         Dim ownerCtrl As Control = Nothing
         Dim overlay As ExOverlayBackdropForm = Nothing
         创建遮罩(owner, ownerCtrl, overlay)
@@ -226,6 +237,17 @@ Public Module ExOverlayMsgBoxModule
     End Function
 
     Private Function 显示自定义(owner As IWin32Window, prompt As Object, buttonTexts() As String, title As Object, icon As MsgBoxStyle, defaultButton As Integer) As Integer
+        If TypeOf owner Is Control Then
+            Dim ownerControl = DirectCast(owner, Control)
+            If ownerControl.InvokeRequired Then
+                Try
+                    Return CInt(ownerControl.Invoke(New Func(Of Integer)(Function() 显示自定义(owner, prompt, buttonTexts, title, icon, defaultButton))))
+                Catch ex As InvalidOperationException
+                    Return -1
+                End Try
+            End If
+        End If
+
         Dim ownerCtrl As Control = Nothing
         Dim overlay As ExOverlayBackdropForm = Nothing
         创建遮罩(owner, ownerCtrl, overlay)
@@ -250,27 +272,50 @@ Public Module ExOverlayMsgBoxModule
 
     Private Sub 绑定遮罩与卡片(overlay As ExOverlayBackdropForm, card As ExOverlayMsgBoxForm)
         Dim cardClosed As Boolean = False
+        Dim overlayClosing As Boolean = False
+        Dim cardClosing As Boolean = False
         AddHandler overlay.Shown,
             Sub()
-                If card.IsDisposed Then Return
+                If overlayClosing OrElse card.IsDisposed Then Return
                 card.Show(overlay)
                 card.Activate()
             End Sub
         AddHandler overlay.BackgroundClicked,
             Sub()
-                If card.IsDisposed OrElse Not card.IsHandleCreated Then Return
-                card.BeginInvoke(CType(Sub()
-                                           If Not card.IsDisposed Then card.Activate()
-                                       End Sub, MethodInvoker))
+                If overlayClosing OrElse card.IsDisposed OrElse Not card.IsHandleCreated Then Return
+                Try
+                    card.BeginInvoke(CType(Sub()
+                                               If overlayClosing OrElse card.IsDisposed Then Return
+                                               Try
+                                                   card.Activate()
+                                               Catch ex As InvalidOperationException
+                                               End Try
+                                           End Sub, MethodInvoker))
+                Catch ex As InvalidOperationException
+                    ' The owner can close between the handle check and BeginInvoke.
+                End Try
             End Sub
         AddHandler card.FormClosed,
             Sub()
                 cardClosed = True
-                If overlay IsNot Nothing AndAlso Not overlay.IsDisposed Then overlay.Close()
+                If overlayClosing OrElse overlay Is Nothing OrElse overlay.IsDisposed OrElse cardClosing Then Return
+                overlayClosing = True
+                overlay.Close()
+            End Sub
+        AddHandler overlay.FormClosing,
+            Sub()
+                overlayClosing = True
             End Sub
         AddHandler overlay.FormClosed,
             Sub()
-                If Not cardClosed AndAlso card IsNot Nothing AndAlso Not card.IsDisposed Then card.Close()
+                overlayClosing = True
+                If cardClosed OrElse card Is Nothing OrElse card.IsDisposed OrElse cardClosing Then Return
+                cardClosing = True
+                Try
+                    card.Close()
+                Finally
+                    cardClosing = False
+                End Try
             End Sub
     End Sub
 

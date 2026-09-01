@@ -27,8 +27,18 @@ Public NotInheritable Class D3D_ImageCache
         ' themselves can throw Object-is-in-use. Serialize the complete source
         ' snapshot and upload, not just the later DrawImage call.
         SyncLock image
-            Dim width = image.Width
-            Dim height = image.Height
+            Dim width As Integer
+            Dim height As Integer
+            Try
+                width = image.Width
+                height = image.Height
+            Catch ex As ArgumentException
+                ' A control may release its Image while a queued GPU frame is
+                ' being drained. Treat that frame as having no image.
+                Return Nothing
+            Catch ex As ObjectDisposedException
+                Return Nothing
+            End Try
             If width <= 0 OrElse height <= 0 Then Return Nothing
             context.BeginTextureUse()
 
@@ -36,11 +46,17 @@ Public NotInheritable Class D3D_ImageCache
             Dim key = BuildKey(image, width, height, frameIndex, generation)
             Dim bytes = CLng(width) * CLng(height) * 4L
 
-            Return _textureCache.AcquireTexture(Of ID2D1Bitmap1)(
-                key,
-                generation,
-                bytes,
-                Function() UploadImage(context.DeviceContext, image, width, height))
+            Try
+                Return _textureCache.AcquireTexture(Of ID2D1Bitmap1)(
+                    key,
+                    generation,
+                    bytes,
+                    Function() UploadImage(context.DeviceContext, image, width, height))
+            Catch ex As ArgumentException
+                Return Nothing
+            Catch ex As ObjectDisposedException
+                Return Nothing
+            End Try
         End SyncLock
     End Function
 

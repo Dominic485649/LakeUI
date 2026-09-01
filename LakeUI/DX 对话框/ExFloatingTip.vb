@@ -118,6 +118,14 @@ Public Module ExFloatingTipModule
     ' ──────────────────── 内部实现 ────────────────────
 
     Private Sub 显示提示(anchor As Control, prompt As Object, duration As Integer)
+        If anchor IsNot Nothing AndAlso anchor.InvokeRequired Then
+            Try
+                anchor.BeginInvoke(CType(Sub() 显示提示(anchor, prompt, duration), MethodInvoker))
+            Catch ex As InvalidOperationException
+            End Try
+            Return
+        End If
+
         Dim theme = ExFloatingTipTheme.Current
         Dim ms = If(duration > 0, duration, theme.DisplayDuration)
         Dim frm As New ExFloatingTipForm(
